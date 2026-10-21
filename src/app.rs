@@ -7958,7 +7958,6 @@ impl App {
 
 	/// Whether the index panel is the one standing (P33⑰): what the status bar's button wears its
 	/// accent for, and what the tests read after a click.
-	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn index_open(&self) -> bool {
 		self.fuzzy.as_ref().is_some_and(|fuzzy| fuzzy.mode == FuzzyMode::Index)
 	}
@@ -7969,7 +7968,6 @@ impl App {
 	pub(crate) fn plus_hit_for_tests(&self) -> Option<egui::Rect> {
 		self.plus_hit
 	}
-
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn close_hit_for_tests(&self) -> Option<egui::Rect> {
 		self.close_hit
@@ -8126,7 +8124,6 @@ impl App {
 
 	/// Turn a yank's clipboard offers off (P35④): the harness's own switch — the text road then
 	/// carries the assertions, and no test ever takes the session's real selection.
-	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn set_uri_offers_for_tests(&mut self, on: bool) {
 		self.uri_offers = on;
 	}
@@ -8240,7 +8237,6 @@ impl App {
 		self.seed_next = 0;
 		self.seed_at = Instant::now();
 	}
-
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn layout(&self) -> (Rect, [f32; 3]) {
 		(self.body, self.shares)

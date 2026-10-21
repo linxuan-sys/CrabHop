@@ -39,11 +39,11 @@ impl Outcome {
 /// One command in flight: its name, when it went out, and the wire its answer arrives on.
 pub(crate) struct Job {
 	/// The drawer's × reads this when it lands (N3's next half).
-	#[allow(dead_code)]
 	pub command: String,
 	pub started: Instant,
 	/// The drawer's own × (N3): set it and the watch kills the command's whole process group. The
-	/// drawer that sets it is the next session's work; until then the field is the hook itself.
+	/// drawer that sets it is the next session's work; until then the field is the hook itself —
+	/// the allow is the marker that says exactly that.
 	#[allow(dead_code)]
 	pub(crate) cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 	rx:          Receiver<Outcome>,

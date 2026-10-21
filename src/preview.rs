@@ -2383,13 +2383,9 @@ mod tests {
 	/// squashed into it.
 	#[test]
 	fn a_picture_is_shown_at_the_columns_width_and_tall_ones_scroll() {
-		let mut pane = PreviewPane::default();
-
 		// a 400 × 900 column and a 200 × 1600 picture: the shown width is the column's 400, and the
 		// height follows the file's shape — 3200, well past the column
-		pane.show = image("k", [ 200, 1600 ]);
-		pane.target = [ 400, 900 ];
-		pane.view = 900.0;
+		let mut pane = PreviewPane { show: image("k", [ 200, 1600 ]), target: [ 400, 900 ], view: 900.0, ..PreviewPane::default() };
 
 		let height = pane.image_height().expect("a picture's own height");
 		assert!((height - 3200.0).abs() < 0.01, "the column's width, the file's shape: {height}");
@@ -2413,10 +2409,7 @@ mod tests {
 	/// lands on one file pixel a screen pixel, and `zoom fit` is the fit again.
 	#[test]
 	fn a_zoom_rides_on_top_of_the_fit_and_can_pass_it() {
-		let mut pane = PreviewPane::default();
-		pane.show = image("k", [ 200, 800 ]);
-		pane.target = [ 400, 900 ];
-		pane.view = 720.0;
+		let mut pane = PreviewPane { show: image("k", [ 200, 800 ]), target: [ 400, 900 ], view: 720.0, ..PreviewPane::default() };
 
 		let fit = pane.image_height().expect("the fit");
 		assert!(pane.zoom_by(true));
@@ -2439,17 +2432,15 @@ mod tests {
 	#[test]
 	fn the_wheel_walks_a_line_at_a_time_and_stops_when_there_is_nothing_to_walk() {
 		let tokens = Tokens::MOCHA;
-		let mut pane = PreviewPane::default();
-		pane.kind = Kind::Docx;
-		pane.raw = Some(Raw {
+		let raw = Raw {
 			path: PathBuf::from("/tmp/x.docx"),
 			kind: Kind::Docx,
 			text: "a\n".repeat(100),
 			truncated: false,
 			images: Vec::new(),
-		});
+		};
+		let mut pane = PreviewPane { kind: Kind::Docx, raw: Some(raw), view: 240.0, ..PreviewPane::default() };
 		pane.laid = Some(lay(Kind::Docx, &"a\n".repeat(100), 200.0, &tokens, false, &HashMap::new()).0);
-		pane.view = 240.0;
 
 		assert!(pane.scroll(3.0), "three lines deeper");
 		assert_eq!(pane.offset, 3.0 * LINE_PX);
@@ -2468,10 +2459,8 @@ mod tests {
 	/// it (P18's correction) — and an image has nothing to seek.
 	#[test]
 	fn a_seek_walks_the_specs_five_lines_and_no_further() {
-		let mut pane = PreviewPane::default();
-		pane.kind = Kind::Docx;
-		pane.raw = Some(Raw { path: PathBuf::from("/tmp/x.docx"), kind: Kind::Docx, text: "a\n".repeat(200), truncated: false, images: Vec::new() });
-		pane.view = 240.0;
+		let raw = Raw { path: PathBuf::from("/tmp/x.docx"), kind: Kind::Docx, text: "a\n".repeat(200), truncated: false, images: Vec::new() };
+		let mut pane = PreviewPane { kind: Kind::Docx, raw: Some(raw), view: 240.0, ..PreviewPane::default() };
 
 		assert!(pane.seek(5));
 		assert_eq!(pane.offset, 5.0 * LINE_PX, "five lines, not five times five");
@@ -2533,9 +2522,11 @@ mod tests {
 			item("top.md", "top.md", 1, false),
 		];
 
-		let mut pane = PreviewPane::default();
-		pane.path = Some(PathBuf::from("/tmp/crabhop-n2-never/tree.zip"));
-		pane.collapsed = archive::default_collapsed(&items);
+		let mut pane = PreviewPane {
+			path: Some(PathBuf::from("/tmp/crabhop-n2-never/tree.zip")),
+			collapsed: archive::default_collapsed(&items),
+			..PreviewPane::default()
+		};
 		let (doc, _) = archive_doc(&items, Some(items.len()), &pane.collapsed, &tokens);
 		pane.show = Show::Archive { items, doc: Some(doc), total: Some(5), truncated: false };
 
@@ -2716,8 +2707,7 @@ mod tests {
 	/// nothing runs without a column to fill.
 	#[test]
 	fn the_idle_sweep_waits_for_the_listing_and_for_quiet() {
-		let mut pane = PreviewPane::default();
-		pane.target = [ 400, 300 ];
+		let mut pane = PreviewPane { target: [ 400, 300 ], ..PreviewPane::default() };
 
 		let dir = PathBuf::from("/tmp/crabhop-n2-never/dir");
 		let pictures: Vec<(PathBuf, Option<Entry>)> = (0..3)

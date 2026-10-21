@@ -392,7 +392,7 @@ mod tests {
 		// the legacy file: one weight, the same shape of answer
 		let legacy = parse_globs("text/html:*.html\ntext/x-genie:*.gs:cs\n");
 		assert_eq!(legacy.len(), 2);
-		assert!(legacy[0].cs == false && legacy[1].cs);
+		assert!(!legacy[0].cs && legacy[1].cs);
 	}
 
 	/// The matcher: stars, questions, classes, negation — and case folding only when the glob

@@ -205,8 +205,8 @@ mod tests {
 		assert_eq!(hits[0].line, Some(2));
 		assert_eq!(hits[0].text.as_deref(), Some("second needle"));
 
-		let hits = collect(&contents(&dir, "first\nsecond", 100));
-		assert!(hits.is_empty() || hits.len() >= 1, "a multi-line pattern is the matcher's own business");
+		// a multi-line pattern is the matcher's own business: the call must simply not panic
+		let _ = collect(&contents(&dir, "first\nsecond", 100));
 
 		assert!(collect(&contents(&dir, "([unclosed", 100)).is_empty(), "an unparseable pattern is quiet");
 

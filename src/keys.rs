@@ -372,9 +372,7 @@ pub(crate) struct Keys {
 	/// row's actions (P21's `?`). Empty for a row this window has no action for.
 	runs:   Vec<Vec<Action>>,
 	/// The runs the keymap asks for, and how many of them have an action here.
-	#[cfg_attr(not(test), allow(dead_code))]
 	done:   usize,
-	#[cfg_attr(not(test), allow(dead_code))]
 	total:  usize,
 }
 

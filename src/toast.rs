@@ -52,6 +52,7 @@ pub(crate) enum Undo {
 
 impl Undo {
 	/// What a stack row says it is, for the readbacks and the tests.
+	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn label(&self) -> &'static str {
 		match self {
 			Undo::BookmarkSave(_) => "bookmark-save",
@@ -127,6 +128,7 @@ impl Toasts {
 	}
 
 	/// Whether the newest note still offers an undo (the harness's own reading of P33⑫'s button).
+	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn newest_has_undo(&self) -> bool {
 		self.items.back().is_some_and(|toast| toast.undo.is_some())
 	}

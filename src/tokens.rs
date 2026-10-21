@@ -16,6 +16,7 @@ pub(crate) const FONT_SMALL: f32 = 13.0;
 /// are told apart by their air rather than by a rule (spec §1.1). The compact density is 26 and
 /// belongs to the settings window of N3.
 pub(crate) const ROW_HEIGHT: f32 = 32.0;
+/// The design hook for N3's compact density, kept until the settings window asks for it.
 #[allow(dead_code)]
 pub(crate) const ROW_HEIGHT_TIGHT: f32 = 26.0;
 
@@ -53,7 +54,8 @@ pub(crate) struct Tokens {
 	pub yellow:    Color32,
 	pub red:       Color32,
 	/// The palette's pink: no file wears it any more (P34's icon table brought yazi's own colours
-	/// for the fonts and the special names), and the Latte batch's appearance page may want it.
+	/// for the fonts and the special names), and the Latte batch's appearance page may want it —
+	/// the allow is the marker that says exactly that.
 	#[allow(dead_code)]
 	pub pink:      Color32,
 	/// bg-raised (surface0): the skeleton's placeholders and the tab hover's substrate (§1.3).

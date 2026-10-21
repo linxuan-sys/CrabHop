@@ -371,7 +371,6 @@ impl Session {
 	pub(crate) fn copied_for_tests(&self) -> Option<String> {
 		self.copied.clone()
 	}
-
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn shoot(&mut self) -> egui::ColorImage {
 		let raw = egui::RawInput {
@@ -579,11 +578,11 @@ mod tests {
 		for _ in 0..240 {
 			std::thread::sleep(Duration::from_millis(16));
 			session.shoot();
-			if let Some(label) = session.app.preview_badge_for_tests() {
-				if label.contains('×') {
-					zoomed = Some(label);
-					break;
-				}
+			if let Some(label) = session.app.preview_badge_for_tests()
+				&& label.contains('×')
+			{
+				zoomed = Some(label);
+				break;
 			}
 		}
 		let zoomed = zoomed.expect("the zoom has to land");

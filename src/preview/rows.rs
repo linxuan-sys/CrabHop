@@ -140,7 +140,6 @@ const GUTTER_PAD: f32 = 6.0;
 pub(crate) struct Gutter {
 	/// The slot's own left edge — nothing paints at it, but the padding is measured from here
 	/// (the tests read both gaps from the pair).
-	#[cfg_attr(not(test), allow(dead_code))]
 	pub number_left:  f32,
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub number_right: f32,
