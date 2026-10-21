@@ -1,9 +1,3 @@
-//! The display rows every textual preview is laid out into: markdown, code, text, docx and a
-//! sheet all end up here, so scrolling, clipping, the gutter and the fades are written once.
-//!
-//! A row is a line box with a height of its own (a heading is taller than a body line), an
-//! optional background band, an optional rule under it, and runs — byte ranges with a colour, a
-//! size and a bold face — for whatever in it is not the row's own text colour.
 
 use std::ops::Range;
 
@@ -12,22 +6,18 @@ use eframe::egui::{Align2, Color32, FontFamily, FontId, Painter, Rect, pos2, vec
 use crate::list::clipped;
 use crate::tokens::{ICON_BOX, Tokens};
 
-/// One styled stretch of a row: `range` is in bytes of the row's text.
 #[derive(Clone)]
 pub(crate) struct Run {
 	pub range:  Range<usize>,
 	pub colour: Color32,
 	pub size:   f32,
 	pub bold:   bool,
-	/// An inline-code chip's own background, when it has one.
 	pub bg:     Option<Color32>,
 }
 
-/// One line of a laid-out document.
 #[derive(Clone)]
 pub(crate) struct Row {
 	pub text:    String,
-	/// The line box's height, and the space above it (margins).
 	pub height:  f32,
 	pub before:  f32,
 	pub indent:  f32,
@@ -35,27 +25,16 @@ pub(crate) struct Row {
 	pub colour:  Color32,
 	pub bold:    bool,
 	pub runs:    Vec<Run>,
-	/// A full-width band behind the row (code blocks, diff lines, a table's header).
 	pub bg:      Option<Color32>,
 	pub bg_round: bool,
-	/// A 3px bar down the row's left (a blockquote).
 	pub bar:     Option<Color32>,
-	/// A 1px rule under the row, and above it when a table starts.
 	pub rule:    Option<Color32>,
 	pub rule_top: bool,
-	/// The line number the gutter shows, when the document has a gutter.
 	pub number:  Option<usize>,
-	/// A table's cells, and the width each column is drawn at.
 	pub cells:   Vec<String>,
 	pub col_w:   f32,
-	/// A leading glyph in a 20px slot, the way the list draws a file's icon — a directory
-	/// listing's own rows wear it.
 	pub lead:    Option<(String, Color32)>,
-	/// A fact right-aligned on the row, 13px subtext — the size and time the list shows too.
 	pub right:   Option<String>,
-	/// The picture this row's band is reserved for (P26's second item): a key into the pane's own
-	/// textures, with the row's text standing as its alt. Nothing is drawn here — the pane paints
-	/// the picture itself, because the textures are its own.
 	pub image:   Option<String>,
 }
 
@@ -91,15 +70,11 @@ impl Row {
 	}
 }
 
-/// A laid-out document: its rows and where each begins, so a scroll finds the first visible row
-/// without walking the ones above it.
 pub(crate) struct Doc {
 	pub rows:   Vec<Row>,
 	pub starts: Vec<f32>,
 	pub total:  f32,
-	/// Whether any row carries a number: the gutter's own yes/no.
 	pub gutter: bool,
-	/// The widest line number on show: what the gutter's own width follows (P15).
 	pub digits: usize,
 }
 
@@ -119,27 +94,16 @@ impl Doc {
 		Self { rows, starts, total: at, gutter, digits }
 	}
 
-	/// The index of the first row at or after `offset`.
 	pub(crate) fn first_at(&self, offset: f32) -> usize {
 		self.starts.partition_point(|start| *start < offset)
 	}
 }
 
-/// The horizontal advance of a character at a size: the same 0.62 the rest of the window measures
-/// its monospace with.
 pub(crate) fn advance(size: f32) -> f32 { size * 0.62 }
 
-/// The gutter's own padding: the same number of pixels on either side of the digits, so the
-/// pane's left edge and the hairline sandwich the number evenly (P15's second take — the number
-/// centred in its own column, not pushed against one edge).
 const GUTTER_PAD: f32 = 6.0;
 
-/// Where the gutter's furniture stands, from the pane's left edge, in pixels: the digits occupy
-/// `[number_left, number_right]` — a slot the digit count defines — and the hairline sits at the
-/// gutter's own right edge, `pad + digits + pad` in. The two gaps are the same number.
 pub(crate) struct Gutter {
-	/// The slot's own left edge — nothing paints at it, but the padding is measured from here
-	/// (the tests read both gaps from the pair).
 	pub number_left:  f32,
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub number_right: f32,
@@ -161,8 +125,6 @@ fn font(size: f32, bold: bool) -> FontId {
 	}
 }
 
-/// Paint the rows that the view from `offset` shows, and return whether any visible line had to be
-/// clipped at its right edge — the caller turns that into the edge's fade.
 pub(crate) fn draw(
 	painter: &Painter,
 	rect: Rect,
@@ -177,14 +139,11 @@ pub(crate) fn draw(
 	let right_fade = rect.max.x - 6.0;
 	let mut cut_right = false;
 
-	// the gutter: the hairline, and the numbers of the rows on show right-aligned against the
-	// pane's own left edge — the separator and the digits are neighbours (P15)
 	if doc.gutter {
 		let x = rect.min.x + hairline.border;
 		painter.line_segment([ pos2(x, rect.min.y), pos2(x, rect.max.y) ], (1.0, tokens.border));
 	}
 
-	// the row before the first at the offset may still poke into the view
 	let mut i = doc.first_at(offset).saturating_sub(1);
 
 	while i < doc.rows.len() {
@@ -198,7 +157,6 @@ pub(crate) fn draw(
 			continue;
 		}
 
-		// the band, the bar, the rules — cheap shapes first
 		if let Some(bg) = row.bg {
 			let band = Rect::from_min_size(pos2(rect.min.x, y), vec2(rect.width(), row.height));
 			let radius = if row.bg_round { 6.0 } else { 0.0 };
@@ -216,8 +174,6 @@ pub(crate) fn draw(
 		}
 
 		if let Some((glyph, colour)) = &row.lead {
-			// the icon's slot sits just left of where the text begins, so a row that indents (a
-			// tree) takes its icon along with it
 			let lead = rect.min.x + row.indent - advance(row.size) - ICON_BOX * 0.5;
 			painter.text(
 				pos2(lead, y + row.height * 0.5),
@@ -239,10 +195,6 @@ pub(crate) fn draw(
 
 		let x = left + row.indent;
 		if let Some(number) = row.number {
-			// the digits stand at the slot's left edge: a short number keeps its gap to the
-			// hairline rather than to the pane's edge — the eye wants the number near the edge,
-			// and the reserved width of the widest number reads as air beside the code, not
-			// beside the pane (the person's ninth-round detail)
 			painter.text(
 				pos2(rect.min.x + hairline.number_left, y + row.height * 0.5),
 				Align2::LEFT_CENTER,
@@ -252,12 +204,10 @@ pub(crate) fn draw(
 			);
 		}
 
-		// a picture's own band: the row is the space it stands in, and nothing is painted here
 		if row.image.is_some() {
 			continue;
 		}
 
-		// a table row: cells at their own pitch, with the grid lines between them
 		if !row.cells.is_empty() {
 			let mut cx = x;
 			for (c, cell) in row.cells.iter().enumerate() {
@@ -273,9 +223,6 @@ pub(crate) fn draw(
 			continue;
 		}
 
-		// the text itself: one draw when nothing in it is styled, a run at a time when something is
-		// — and a row carrying a right-aligned fact keeps its own text clear of it, the way the
-		// list's own rows leave their facts their column
 		let facts = row.right.as_ref().map_or(0.0, |right| {
 			painter.layout_no_wrap(right.clone(), font(13.0, false), tokens.subtext).size().x + 12.0
 		});
@@ -316,8 +263,6 @@ pub(crate) fn draw(
 	}
 
 	if cut_right && fade {
-		// the right edge says the line continues: four thinning slivers, the spec's stand-in for a
-		// gradient the painter cannot make (§3.8)
 		for strip in 0..4 {
 			let alpha = (255.0 * (1.0 - (strip as f32 + 0.5) / 4.0)) as u8;
 			let x = rect.max.x - 24.0 + strip as f32 * 6.0;
@@ -334,9 +279,6 @@ mod tests {
 	use super::*;
 	use eframe::egui::Color32;
 
-	/// The gutter hugs the pane's left edge and sandwiches its digits evenly (P15): the gap left
-	/// of the number and the gap between it and the hairline are the same number of pixels, and
-	/// the hairline sits at the gutter's own right edge.
 	#[test]
 	fn the_gutter_sandwiches_its_digits_between_equal_gaps() {
 		let advance = advance(13.0);
@@ -361,8 +303,6 @@ mod tests {
 		assert_eq!(gutter(0, advance).border, one.border, "a lone number is one digit's gutter");
 	}
 
-	/// The document knows its widest number, because the gutter follows it: one to nine is one
-	/// digit, ten to ninety-nine is two.
 	#[test]
 	fn a_document_knows_its_widest_number() {
 		let row = |n: usize| {
@@ -376,8 +316,6 @@ mod tests {
 		assert_eq!(Doc::new(vec![ row(1), row(120) ]).digits, 3);
 	}
 
-	/// The layout's arithmetic: each row starts at the sum of what came before it, its own margin
-	/// included, and the first row at an offset is found without walking the ones above.
 	#[test]
 	fn starts_are_the_prefix_sums_and_a_scroll_finds_its_first_row() {
 		let mut a = Row::new("a", 16.0, Color32::WHITE);
@@ -396,8 +334,6 @@ mod tests {
 		assert_eq!(doc.first_at(37.0), 2, "past the second row's start it is the third that begins");
 	}
 
-	/// The clip is in cells, and a wide glyph is taken whole or left out — the list's own rule, so
-	/// a row and a file name cut their names the same way.
 	#[test]
 	fn a_row_is_clipped_the_way_the_list_clips_its_names() {
 		assert_eq!(clipped("abcdef", 3), "abc");

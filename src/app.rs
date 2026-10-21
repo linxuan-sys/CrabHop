@@ -1,6 +1,3 @@
-//! The window: every piece of interaction is decided here, on this thread — the tabs, the cursor,
-//! the selection, the directory stack and the scrolling. The background is only ever asked for a
-//! directory, and its answer may arrive whenever it likes.
 
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -36,64 +33,34 @@ use crate::toast::{self, Toasts, Undo};
 use crate::tokens::{FONT_SIZE, FONT_SMALL, ICON_BOX, LINE_HEIGHT, ROW_HEIGHT, Tokens};
 use crate::trash;
 
-/// How long a directory may take before the skeleton admits to the wait (§1.3).
 const SKELETON_AFTER: Duration = Duration::from_millis(120);
 
-/// The size/time facts share a row in the middle column only (P12): the parent list and the
-/// preview's directory listing are icon and name, so no window width can crowd them into each
-/// other. Inside the middle column the ladder is `list::row_facts`'s own.
 pub(crate) const PARENT_META: bool = false;
 pub(crate) const CURRENT_META: bool = true;
-/// The index panel's footer (P22): the keys that are only its own, and the `A` the table asked to
-/// keep in sight so the add is not forgotten.
 const INDEX_HINT: &str = "Enter 跳转 · Ctrl+S 保存目录为索引 · Del 删除所选 · i 再按跳输入框 · Esc 退出";
-/// `M`'s panel, its keys said where a person looks for them (P21's table): the nine options, two
-/// lines of them.
 const DEVICE_HINT: &str = "↑↓ 选择 · Enter 挂载并跳转 · p 挂载 · m 挂载并跳转 · g 跳到挂载点 · Esc 关闭";
 const DEVICE_HINT_UNMOUNT: &str = "↑↓ 选择 · Enter 卸载并弹出 · u 卸载 · U 强制卸载 · Esc 关闭";
 const DEVICE_HINT_URI: &str = "R 重挂当前设备 · a 添加 URI · e 编辑 URI · r 移除 URI（远程族暂不支持） · 鼠标双击执行";
-/// The line under it (P24): what the same box does when what is typed turns out to be a path —
-/// the three priorities of P22, said in one breath.
-/// How long the index panel's own notice stays up (P22): a typed path that is not there says so,
-/// and then the footer goes back to its keys.
 const NOTICE_ALIVE: Duration = Duration::from_secs(2);
-/// The spot card's own width (P23): wide enough for 「可列出、可新建删除、可进入」 to stand on one
-/// line, and narrow enough to stay a corner card over the preview column.
 const SPOT_WIDTH: f32 = 360.0;
-/// The table's own ceiling on tabs (P21): ten, and the eleventh press is answered with words.
 const TAB_LIMIT: usize = 10;
-/// How many change-type tasks the undo stack keeps (P33⑫): the most recent ten; the eleventh
-/// pushes the oldest out.
 const UNDO_DEPTH: usize = 10;
-/// How long an overlay scrollbar stays awake after the last touch (§3 总规则).
 const BAR_IDLE: Duration = Duration::from_millis(1200);
-/// How long a chord's family stays on screen before it goes away: a key inside the chord resets
-/// the clock, and nothing inside it is what closes the sequence (P18's `which` hint). Ten seconds
-/// since P27 — the hint is a reference a person reads, not a flash; a continuation key, Escape, or
-/// any action still takes it away at once.
 const WHICH_TIMEOUT: Duration = Duration::from_secs(10);
-/// The bottom hint line's own height, while the bin is the view (P19): the four keys that are
-/// only the bin's, and nothing else, so the columns make room for it.
 const TRASH_HINT: f32 = 24.0;
 
-/// The chip metrics of the tab bar, from the spec's 100–220px band (§2.4).
 const CHIP_MIN: f32 = 100.0;
 const CHIP_MAX: f32 = 220.0;
 const CHIP_GAP: f32 = 6.0;
 const CHIP_PAD: f32 = 34.0;
 
-/// One directory as the window knows it: where it is, and where the cursor was left in it.
 struct View {
 	path:   PathBuf,
 	cursor: usize,
 }
 
-/// What a tab's view was built from: the snapshot, the directory, the switches, the ordering and
-/// the filter — any change of it is a rebuild.
 type ViewKey = (usize, PathBuf, bool, (SortBy, bool), Option<String>, bool);
 
-/// A tab's own trail of directories (P13): where it has been, and where in that trail it
-/// stands. Pure, so the rule can be read and tested without a window.
 #[derive(Default)]
 pub(crate) struct Trail {
 	dirs: Vec<PathBuf>,
@@ -101,8 +68,6 @@ pub(crate) struct Trail {
 }
 
 impl Trail {
-	/// The tab has arrived somewhere: the trail keeps it, and anything after it is a future that
-	/// no longer exists, so it is cut away.
 	fn push(&mut self, dir: &Path) {
 		if self.dirs.get(self.at).map(PathBuf::as_path) == Some(dir) {
 			return;
@@ -113,50 +78,33 @@ impl Trail {
 		self.at = self.dirs.len() - 1;
 	}
 
-	/// `H` / `L`: the directory one step back or forward on the trail, if there is one.
 	fn travel(&mut self, back: bool) -> Option<PathBuf> {
 		let at = if back { self.at.checked_sub(1)? } else { self.at + 1 };
 		self.dirs.get(at).cloned().inspect(|_| self.at = at)
 	}
 
-	/// How many steps the trail holds (the tests read the seat; nothing else does).
 	#[cfg(test)]
 	fn at(&self) -> usize { self.at }
 }
 
-/// The parent column's own mouse (P33⑧): the row a click seated — `None` means the column's own
-/// reading, the stack step's cursor or the cwd's row in the filesystem parent — and the scroll
-/// the wheel walks it by. Per tab, and reset when the tab walks anywhere.
 #[derive(Default)]
 struct ParentView {
 	seat:   Option<usize>,
 	scroll: Scroll,
-	/// The parent these were read against: a different parent is a new column.
 	path:   Option<PathBuf>,
 }
 
-/// One tab: its own stack of directories, its own ordering, its own scroll — and a name, if the
-/// person gave it one.
 struct Tab {
 	stack:   Vec<View>,
-	/// The trail `H`/`L` walk (P13).
 	history: Trail,
 	view:    Vec<usize>,
 	view_of: Option<ViewKey>,
 	scroll:  Scroll,
 	title:   Option<String>,
-	/// The pattern the view is filtered by, if any: per tab, the way yazi keeps it.
 	filter:  Option<String>,
-	/// `g f`: whether the list keeps only symbolic links (P21's table).
 	symlinks: bool,
-	/// The left column's pointer state (P33⑧): its seat and its scroll.
 	parent:  ParentView,
-	/// The name the cursor is waiting for a row to sit on: a `leave` into a directory whose
-	/// listing had not arrived seats the first row now and the right one when the names land —
-	/// the directory is kept beside the name, so a later navigation cannot seat the wrong listing.
 	seat:    Option<(PathBuf, String)>,
-	/// The bin, while this tab is its own view (P27): `g t` makes such a tab, the middle column
-	/// shows it instead of the directory, and walking away (a `cd`, a `leave`) leaves it behind.
 	trash:   Option<TrashView>,
 }
 
@@ -183,8 +131,6 @@ impl Tab {
 		&self.stack.last().expect("the stack is never empty").path
 	}
 
-	/// What the chip says: the name the person gave it, or the directory's own — and the bin's own
-	/// word while the tab is the bin's view (P27).
 	fn name(&self) -> String {
 		if let Some(title) = &self.title {
 			return title.clone();
@@ -198,8 +144,6 @@ impl Tab {
 	}
 }
 
-/// A file operation in flight, as the status bar reads it: what it is doing, how far it has come
-/// and how fast.
 #[derive(Clone)]
 struct Progress {
 	title:    String,
@@ -207,60 +151,41 @@ struct Progress {
 	rate:     Option<String>,
 }
 
-/// A device read or action in flight (P17): the intent the answer serves, and the worker's own
-/// channel. The bus is never touched on this thread.
 struct DeviceJob {
 	do_: DeviceDo,
 	rx:  std::sync::mpsc::Receiver<Answer>,
 }
 
 enum Answer {
-	/// The read-only listing.
 	Devices(Result<Vec<mount::Device>, String>),
-	/// A mount that landed somewhere to go.
 	At(Result<std::path::PathBuf, String>),
-	/// An unmount (and its eject) that is done.
 	Done(Result<(), String>),
 }
 
-/// What `y` / `x` are holding for a paste (P13): the targets, and whether the paste would move
-/// them. The paste itself is not part of this batch.
 #[derive(Clone)]
 struct Yank {
 	paths: Vec<PathBuf>,
 	cut:   bool,
 }
 
-/// The bulk editor of §4.1: one name per line, and what that column means against the disk.
 struct BulkEditor {
 	edit:  Edit,
 	lines: Vec<bulk::Line>,
 }
 
-/// An in-place rename of §4.3: the row's own name becomes a field, and a conflict is checked as
-/// it is typed — the confirmation dialog is moved forward to the keystroke.
 struct ItemRename {
 	path: PathBuf,
 	edit: Edit,
-	/// What is wrong with the name right now, when anything is: the field turns `err` and Enter is
-	/// refused until it is right.
 	note: Option<&'static str>,
 }
 
-/// The bottom command line (§4.8): a vim-style line above the status bar, its history recall,
-/// and the path completion the tab key opens.
 struct Cmdline {
-	/// `:` waits for its command; `;` is the same run seen as a quick one. The prefix's colour is
-	/// the only place the two differ.
 	block:  bool,
 	edit:   Edit,
 	comp:   Option<Completions>,
-	/// Where an up-arrow stands in the history, newest = last; `None` is a line of one's own.
 	recall: Option<usize>,
 }
 
-/// One command's answer (§4.8): its name, its exit code, and its text — a temporary sheet at the
-/// window's bottom, put away with `Esc`.
 struct Output {
 	title: String,
 	code:  Option<i32>,
@@ -268,46 +193,31 @@ struct Output {
 	from:  usize,
 }
 
-/// open-with (§4.4): the item(s) a command is handed to, the field to type it in, and the
-/// history and `$PATH` behind a tab.
 struct OpenWith {
 	paths:  Vec<PathBuf>,
-	/// What the subtitle names: one file by its own name, several by their count.
 	name:   String,
 	edit:   Edit,
 	comp:   Option<Completions>,
 	recall: Option<usize>,
 }
 
-/// What the fuzzy panel is standing over (§5.3): the source decides the text and the score's own
-/// reading, and the mode decides what Enter does.
 #[derive(Clone, Copy, PartialEq)]
 enum FuzzyMode {
-	/// `z` / `Z` / `] f`: the index panel (P14) — bookmarks, high scores and recent visits in one
-	/// line, with a key badge, a delete, a rename and a save of the cwd to hand.
 	Index,
-	/// `M m` / `M u`: the devices UDisks2 knows, and what Enter does with the standing one.
 	Devices {
 		unmount: bool,
 		force:   bool,
 	},
-	/// `s`: the root's names, filled in as the walk goes.
 	FindNames,
-	/// `S`: the root's matching lines, likewise.
 	FindText,
 }
 
 #[derive(Clone)]
 struct FuzzyItem {
 	text:    String,
-	/// What the right-hand column reads when the source has a score of its own — the frecency
-	/// panel's own number (§5.3); the fuzzy score stands in when it does not.
 	right:   Option<String>,
 	payload: FuzzyPayload,
-	/// The index panel's own grouping (P14): its rows come from three sources at once, and the
-	/// panel says which is which where the group changes. Empty for every other panel.
 	zone:    &'static str,
-	/// A bookmark whose path is no longer there: still listed, and said so in the row's colour.
 	broken:  bool,
 }
 
@@ -319,47 +229,29 @@ impl FuzzyItem {
 
 #[derive(Clone)]
 enum FuzzyPayload {
-	/// A directory to cd into, or a file to reveal by its parent.
 	Path(PathBuf),
-	/// An index entry, named by the name the store knows it under.
 	Index(String),
-	/// A UDisks2 block, named by its object path.
 	Device(String),
 }
 
-/// The index panel's standing row, when one of its zones owns it (P40): the bookmarks zone names
-/// its entry, the 高频 and 最近 zones stand on a frecency path — both the store's own.
 enum IndexEntry {
-	/// A bookmark, by the name its store knows it under.
 	Bookmark(String),
-	/// A frecency row: the path, and the zone it was standing in (for the words).
 	Frecency(PathBuf, &'static str),
 }
 
-/// A filter running off this thread: for a list past the spec's two thousand the matching goes
-/// where it belongs, and the answer is taken only when its generation is still the current one.
 struct FilterJob {
 	epoch: u64,
 	rx:  std::sync::mpsc::Receiver<Vec<fuzzy::Hit>>,
 }
 
-/// The fuzzy panel (§5.3): non-modal, top-anchored, filtered at each keystroke. Its source list
-/// is shared behind an `Arc`, so a search can swap a fresh one in while the panel is up.
-/// The two-stage focus a panel's input box has (P33⑬): the panel opens with the list holding the
-/// keyboard, `f` — or a click on the box — moves it inside, and Esc steps back out of the box
-/// before it closes anything. One machine, shared: the help panel (`?`) had it first, the index
-/// panel (`i`) is its second user, and a later panel is one more field of this type.
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub(crate) struct PanelFocus {
 	pub(crate) inside: bool,
 }
 
 impl PanelFocus {
-	/// `f`, or a click on the box itself.
 	pub(crate) fn enter(&mut self) { self.inside = true; }
 
-	/// Esc: `true` when the box held the keyboard and now does not — the panel closes only when
-	/// this answers `false`.
 	pub(crate) fn escape(&mut self) -> bool {
 		let held = self.inside;
 		self.inside = false;
@@ -374,28 +266,17 @@ struct Fuzzy {
 	items:   Arc<Vec<FuzzyItem>>,
 	hits:    Vec<fuzzy::Hit>,
 	at:      usize,
-	/// Which half of the panel has the keyboard (P33⑬): the index opens with the list, every other
-	/// panel opens the way it always did — its box.
 	focus:   PanelFocus,
-	/// Kept across keystrokes: nucleo's tables are worth the warm.
 	matcher: nucleo_matcher::Matcher,
 	job:     Option<FilterJob>,
 	epoch:     u64,
-	/// The walk still filling the list when the panel is a search's own, when the last keystroke
-	/// was, and whether results are still on their way.
 	finder:  Option<search::Job>,
 	since:   Instant,
 	loading: bool,
-	/// Whether the walk for the current query has already had its say: a finished walk must not
-	/// start over — a change of query is what starts the next one.
 	filled:  bool,
-	/// The panel's own last word (P22): what Enter found when the typed path was not there, and
-	/// when it was said — the footer says it in `err` for a moment.
 	notice:  Option<(String, Instant)>,
 }
 
-/// A one-line question the window asks — `c z`'s archive name: the title, the field, and what
-/// Enter does with what was typed.
 struct Prompt {
 	title:  String,
 	edit:   Edit,
@@ -404,83 +285,50 @@ struct Prompt {
 
 #[derive(Clone)]
 enum PromptDo {
-	/// Pack these into the archive the field names.
 	Compress(Vec<PathBuf>),
-	/// `a`: the name that was typed, made as a file when it has an extension and as a directory
-	/// when it has none (P21's table).
 	Create,
-	/// `L`'s panel: the path the link is to point at, made in the parent column's own directory
-	/// (P21's table).
 	Link(LinkKind),
 }
 
-/// A dangerous confirmation (§4.5): the question, and what a yes would do. The keyboard's own
-/// answers are `y` and `n`; the focus sits on the cancel side.
 struct Confirm {
 	text:   String,
-	/// The items the question is about, up to five — the spec's own list.
 	names:  Vec<String>,
 	action: ConfirmDo,
 }
 
 #[derive(Clone, PartialEq)]
 enum ConfirmDo {
-	/// `D`: these paths, for good.
 	Delete(Vec<PathBuf>),
-	/// `D` inside the bin's view: these bin items, purged.
 	Purge(Vec<trash::TrashItem>),
-	/// Emptying the bin.
 	Empty,
-	/// `p` on a name already standing there: overwrite it and paste (P21's table).
 	Paste {
 		cut:   bool,
 		force: bool,
 	},
-	/// `Enter` on a name the original directory still holds: back under this free name instead —
-	/// nothing standing there is touched (P19).
 	RestoreAs(trash::TrashItem, PathBuf),
 }
 
-/// The trash work in flight, each answer read every frame.
 enum TrashJob {
-	/// A delete to the bin, with the originals its toast will offer back.
 	Delete(trash::Job<()>, Vec<PathBuf>),
-	/// An undo: originals going back to where they were — and the words its toast says (`Enter` on a
-	/// taken name says where the item actually landed, P19).
 	Restore(trash::Job<()>, Vec<PathBuf>, String),
-	/// The bin's own list, for the `g t` view.
 	List(trash::Job<Vec<trash::TrashItem>>),
-	/// A permanent delete — of paths, or of bin items — and the words its toast says when it lands.
 	Purge(trash::Job<()>, String),
-	/// Emptying the bin.
 	Empty(trash::Job<()>),
 }
 
-/// The byte-mover an undo has set going (P33⑫): the same discipline every other mover keeps —
-/// the work runs on a thread of its own, and the frame reads the answer when it lands.
 enum UndoJob {
-	/// A copy-paste taken back: the copies go to the bin.
 	Discard(trash::Job<()>),
-	/// A cut-paste taken back: the moved set walks home.
 	Back(paste::Job<paste::Done>),
 }
 
-/// The bin's own view: the list, its cursor and its own scroll — a view of the window, not a
-/// popup, so the columns are the view (P19).
 struct TrashView {
 	items:   Vec<trash::TrashItem>,
-	/// Which of them are directories, read once when the list lands: the draw path touches no
-	/// filesystem (P19).
 	dirs:    Vec<bool>,
 	cursor:  usize,
-	/// Whether the list is still on its way.
 	loading: bool,
-	/// The view's own place in its list: the middle column's scroll stays the directory's.
 	scroll:  Scroll,
 }
 
-/// What a chip's own interaction decided, applied after the loop that found it: the draws and the
-/// clicks cannot both borrow the tab list.
 #[derive(Default)]
 struct ChipActions {
 	switch:       Option<usize>,
@@ -491,7 +339,6 @@ struct ChipActions {
 	moved:        Option<(usize, usize)>,
 }
 
-/// What a dry terminal launch would have run (P35③): the argv and its folder.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct TerminalLaunch {
 	pub(crate) argv:   Vec<String>,
@@ -505,191 +352,107 @@ pub(crate) struct App {
 	cache:  FolderCache,
 	keys:   Keys,
 
-	/// The tabs, and which of them is on screen.
 	tabs:   Vec<Tab>,
 	active: usize,
-	/// A tab title being typed in place: the buffer, the tab, and whether the field has taken the
-	/// focus yet.
 	rename:       Option<String>,
 	rename_at:    Option<usize>,
 	rename_focus: bool,
-	/// The tab bar's own horizontal scroll, when the chips outgrow it.
 	tabs_scroll:  f32,
-	/// The tab strip's two buttons as the last frame drew them (P33⑮⑯): the \`+\` beside the last
-	/// chip and the corner's close. The harness reads their places from here.
 	plus_hit:     Option<Rect>,
 	close_hit:    Option<Rect>,
-	/// The chips' own × boxes as the last frame drew them (P33②): the harness's pointer needs a
-	/// place to press, told apart by the tab's own index — a chip only grows its × while it is
-	/// active or hovered, and hover settles a frame late.
 	tab_close_hits: Vec<(usize, Rect)>,
-	/// The chips themselves as the last frame drew them (P33②): where the pointer walks to hover
-	/// one, which is what grows its ×.
 	tab_chip_hits:  Vec<(usize, Rect)>,
-	/// The status bar's own index button as the last frame drew it (P33⑰).
 	status_index: Option<Rect>,
 
 	selection: HashSet<PathBuf>,
-	/// The cursor's own name: what a re-read of the same directory keeps it on (P18).
 	cursor_name: Option<String>,
-	/// What `y` / `x` are holding (P13), if anything.
 	yank:      Option<Yank>,
 	preview:   PreviewPane,
 	tasks:     Vec<Progress>,
 
-	/// The spot card §4.6: the cursor's own file, described over the preview column, and the
-	/// half-typed `c c` chord that copies its path.
 	spot:     bool,
 	spot_chord: bool,
 
-	/// The bulk editor and the in-place rename, either perhaps owning the keyboard — and the
-	/// toasts, which are the only thing either says when it is done.
 	bulk:        Option<BulkEditor>,
 	item_rename: Option<ItemRename>,
 	toasts:      Toasts,
-	/// The row's own menu, when one is up (P31): the item list, the applications page, a
-	/// confirmation — see `menu.rs` for what it holds.
 	menu:        Option<crate::menu::Menu>,
-	/// The channel an opening that failed comes back on (P30): the window hands a path to the
-	/// system's launcher on a thread of its own, and a launcher that refused sends it back here.
 	open_failed: (std::sync::mpsc::Sender<PathBuf>, std::sync::mpsc::Receiver<PathBuf>),
-	/// What a menu action could not do (P31): a terminal that is not there, said on a toast.
 	menu_note:   (std::sync::mpsc::Sender<String>, std::sync::mpsc::Receiver<String>),
-	/// Whether a terminal launch is only noted, not made (P35③): the harness's own switch — a
-	/// headless test must not open a window.
 	terminal_dry: bool,
-	/// What a dry launch would have run (P35③): the argv and its folder, newest last.
 	terminal_log: (std::sync::mpsc::Sender<TerminalLaunch>, std::sync::mpsc::Receiver<TerminalLaunch>),
-	/// Whether the system's own opener is only noted, not run (P37①): the harness's switch — a
-	/// headless test must not spawn `xdg-open`, either.
 	open_dry:    bool,
-	/// The preferences a test hands the default lookup (P37④): in place of `mimeapps.list`, so a
-	/// test never has to write the person's own file.
 	mimeapps_for_tests:        Option<String>,
-	/// The ledger paths a test's own window reads (P38④): the person's level and the system's —
-	/// a file of the test's own, so the live read and the merge-write are exercised without
-	/// touching the shared sandbox file the other tests read.
 	mimeapps_path_for_tests:        Option<PathBuf>,
 	mimeapps_system_path_for_tests: Option<PathBuf>,
-	/// The frecency store a test's own window reads and writes (P40): a file of the test's own —
-	/// every session writes its visits to the store, so a shared file is a race under load.
 	frecency_path_for_tests:        Option<PathBuf>,
-	/// What a dry default open would have handed over (P37①): the path, newest last.
 	open_log:    (std::sync::mpsc::Sender<PathBuf>, std::sync::mpsc::Receiver<PathBuf>),
-	/// Whether a yank offers the file-managers' clipboard flavors too (P35④ phase two): on in the
-	/// window, off in the harness — a test must not take the session's own selection.
 	uri_offers: bool,
 
-	/// The command line (§4.8) and the shell's own state: the history it recalls from and the job
-	/// that may be in flight.
 	cmdline: Option<Cmdline>,
 	history: History,
 	job:     Option<shell::Job>,
 	output:  Option<Output>,
 
-	/// open-with (§4.4): the field when it is up, and the history it completes from.
 	openwith:     Option<OpenWith>,
 	open_history: open::History,
 
-	/// The bookmarks and the frecency behind them (§5.1–§5.3): the store, what has been visited,
-	/// the panel when it is up, the key a half-typed bookmark command waits for, the rename
-	/// field, and the dangerous confirmation.
 	bookmarks:   book::Bookmarks,
 	frecency:    frecency::Frecency,
 	visited:     Option<PathBuf>,
 	fuzzy:       Option<Fuzzy>,
 	confirm:     Option<Confirm>,
 
-	/// The devices (P17): the work in flight.
 	device_job: Option<DeviceJob>,
 
-
-	/// The bin (§ d/D and the R b view): the work in flight and the view itself.
 	trash_job:  Option<TrashJob>,
-	/// `p`'s own work in flight (P21): the byte-mover never runs on this thread.
 	paste_job:  Option<paste::Job<paste::Done>>,
-	/// The change-type tasks that can be taken back (P33⑫): the most recent last, ten deep.
 	undo:       VecDeque<Undo>,
-	/// The undo's own byte-mover, when one is going (P33⑫).
 	undo_job:   Option<UndoJob>,
 
-	/// `c z`: the archive's name being typed, and the pack in flight.
 	prompt: Option<Prompt>,
 	pack:   Option<pack::Job>,
 
-	/// The filter field (§P13's `f`): what is being typed, while it is up.
 	filter: Option<Edit>,
 
-	/// The switches the keymap's own runs are: whether hidden files show, how the list is ordered,
-	/// and what the facts column carries.
 	hidden:    bool,
 	sort:      (SortBy, bool),
-	/// What a `,r` press shuffles by: a new seed is a new order.
 	sort_seed: u64,
-	/// The fact columns the rows carry (P33⑲): the size always, and the rest a set of switches.
 	columns:   Columns,
 	help:      bool,
 	help_from: usize,
-	/// The interactive help (P21's `?`): what was typed into its box, the row it stands on, and
-	/// whether the box owns the keyboard.
-	/// `P21`: `L`'s own panel — three ways to link, picked by key or by click.
 	link_pick: Option<usize>,
-	/// `/` (P21): the box while it is open, and the pattern the list keeps colouring by once it is
-	/// kept.
 	find:      Option<Edit>,
 	find_last: Option<String>,
 	help_query: Edit,
 	help_at:    usize,
 	help_focus: PanelFocus,
 
-	/// The keys of a sequence that is still open, the way yazi waits for a chord's next key.
 	sequence: Option<Sequence>,
-	/// When that sequence last had a key: the `which` hint's own clock, which expires it (P18).
 	which_at: Option<Instant>,
-	/// Where the replay's own pointer stands, put there by its `hover` step: the wheel's routing
-	/// reads it, so a replay can stand over the preview column the way a hand would (P18).
 	replay_at: Option<egui::Pos2>,
 
-	/// When each overlay scrollbar (current list, preview) was last touched, for the fade.
 	bars_moved: [Option<Instant>; 2],
 
-	/// The body the columns live in, as the last frame laid it out: the wheel hit-tests here.
 	body: Rect,
 
-	/// Whether the first list has been seen at all — the metric fires once.
 	first: bool,
 
-	/// The seed a replay feeds in (`CRABHOP_KEYS`, `;`-separated), and the shots it may ask for.
 	seed:      Vec<String>,
 	seed_next: usize,
 	seed_at:   Instant,
 	shot:      Option<(String, usize)>,
-	/// A reveal whose directory is still being read: it waits for the snapshot rather than failing.
 	reveal:    Option<PathBuf>,
-	/// Where the pointer was this frame: the hover state is drawn from it.
-	/// The panel's own place as last drawn (P37③): the harness reads its height — the floor is a
-	/// promise about a rect, not a formula.
 	menu_panel:  Option<egui::Rect>,
-	/// The toasts' own widths as last drawn (P42②): `(the rect, the text's own measure)` per
-	/// seat, oldest first — what the harness reads to say a rect fits its words.
 	toast_widths: Vec<(f32, f32)>,
 
 	hover:     Option<egui::Pos2>,
-	/// Whether the real fonts are in. They go in before the first frame now; the
-	/// `CRABHOP_FONTS=late` arm of the A/B starts false and swaps them behind the first frame.
 	dressed:   bool,
-	/// The first frame that draws with the real faces: 1 with the fonts early, 2 when the swap
-	/// happens behind the first frame. The A/B reads this through `metrics::first_dressed`.
 	dress_at:  u64,
 	shot_wait: Option<u32>,
 	frame:     u64,
 }
 
-/// Who owns a wheel (P38③): one decision for the whole window, in one place — a standing panel
-/// first (its pages walk their own window with it, P36②), then whatever stands under the pointer:
-/// the tab bar, the output panel, the parent column, the preview, the help list — and the list
-/// itself otherwise (the bin, while it is the view). The routing used to be a chain of ifs with
-/// the menus' own guard bolted on; every new owner is now one arm here and one arm in the route.
 #[derive(Clone, Copy, PartialEq)]
 enum WheelOwner {
 	Menu,
@@ -703,12 +466,6 @@ enum WheelOwner {
 
 impl App {
 	pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Self {
-		// The Maple faces go in before the first frame, the way they always did: the A/B (see
-		// docs/dev/report.md, slice 0) measured the swap *behind* the first frame at ~35ms more to
-		// the first paint and ~95ms more to the frame that actually carries the type — on this
-		// stack the deferred first frame falls back to the system faces, which are the expensive
-		// ones to shape, and the deferred arm pays for Maple on the second frame anyway.
-		// `CRABHOP_FONTS=late` is that other arm, kept for the measurement.
 		let late = std::env::var("CRABHOP_FONTS").is_ok_and(|mode| mode == "late");
 		if !late {
 			Tokens::install(&cc.egui_ctx);
@@ -721,23 +478,14 @@ impl App {
 		Self::with_context(cc.egui_ctx.clone(), seed)
 	}
 
-	/// The window with an egui context alone (P25): a `CreationContext` is what a *real* window
-	/// hands over, and the headless harness has none — no window, no surface. Everything `new`
-	/// takes from one is the context itself (and the fonts, which both callers install).
 	pub(crate) fn with_context(ctx: egui::Context, seed: Vec<String>) -> Self {
 		let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-		// the font arm is read once more here: `new` weighs it for the early install, and the
-		// first dressed frame is the other half of the same measurement
 		let late = std::env::var("CRABHOP_FONTS").is_ok_and(|mode| mode == "late");
 		let config = Config::load();
 		let shares = config.columns.shares();
 
-		// the platform's input method is allowed in: Chinese input in the window's own fields is
-		// the point of it (P18)
 		ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(true));
 
-		// the PDF library is bound before a document is hovered, so a missing one is a line at
-		// startup rather than a surprise at the first `.pdf`
 		crate::preview::warm_pdf();
 
 		Self {
@@ -839,7 +587,6 @@ impl App {
 		&mut self.tabs[self.active]
 	}
 
-	/// The bin, while it is this tab's own view (P27).
 	fn bin(&self) -> Option<&TrashView> {
 		self.tab().trash.as_ref()
 	}
@@ -848,8 +595,6 @@ impl App {
 		self.tab_mut().trash.as_mut()
 	}
 
-	/// Whether the tab on screen is the bin's own (P27): the middle column's branch, the hint
-	/// line, the body's height and the list keys all read it.
 	fn in_bin(&self) -> bool {
 		self.tab().trash.is_some()
 	}
@@ -858,10 +603,6 @@ impl App {
 		self.cache.get(self.tab().path())
 	}
 
-	/// The parent column's own view: the path to list and the row to light inside it. It is the
-	/// directory the tab stepped out of when the stack holds one; otherwise — a tab at the root of
-	/// its stack, which is every fresh tab — the cwd's filesystem parent, with the cwd's own row
-	/// lit by looking it up. `None` only for a cwd with no parent at all: the filesystem root.
 	fn parent_view(&self) -> Option<(PathBuf, usize)> {
 		let (path, cursor) = parent_path(&self.tab().stack, self.tab().path())?;
 
@@ -887,7 +628,6 @@ impl App {
 		snapshot.entries.get(index).map(|entry| tab.path().join(&entry.name))
 	}
 
-	/// The entry the cursor is on, for the status bar's own read of it.
 	fn selected_entry(&self) -> Option<Entry> {
 		let tab = self.tab();
 		let snapshot = self.entries();
@@ -896,7 +636,6 @@ impl App {
 		snapshot.entries.get(index).cloned()
 	}
 
-	/// Rebuild the view of the active tab when the directory, the switches or the ordering move.
 	fn refresh_view(&mut self) {
 		let snapshot = self.cache.get(self.tab().path());
 		let key = (
@@ -916,14 +655,11 @@ impl App {
 		if let Some(pattern) = &self.tab().filter {
 			view.retain(|index| matches(pattern, &snapshot.entries[*index].name));
 		}
-		// `g f`: the list keeps only what is a link, and says so in the status bar
 		if self.tab().symlinks {
 			view.retain(|index| snapshot.entries[*index].link);
 		}
 		let len = view.len();
 
-		// a directory read again (a watcher's re-read) keeps the cursor on the same *name*: the
-		// index it holds would slide onto a neighbour when a file appears above it (P18)
 		if same_dir
 			&& let Some(name) = &self.cursor_name
 			&& let Some(at) = view.iter().position(|index| snapshot.entries[*index].name == *name)
@@ -931,8 +667,6 @@ impl App {
 			self.tab_mut().stack.last_mut().expect("never empty").cursor = at;
 		}
 
-		// a `leave` whose listing had not landed sat on the first row: it sits down properly the
-		// moment the names arrive, on the directory it came out of (P18)
 		let seat = self.tab().seat.clone();
 		if let Some((dir, name)) = seat
 			&& *self.tab().path() == dir
@@ -948,13 +682,9 @@ impl App {
 		tab.view_of = Some(key);
 		tab.scroll.len = len;
 
-		// the listing landed (or the switches moved it): the cursor's own file is what the column
-		// previews now, and the sweeps read their lists from the view that just became current
-		// (P27⑥ — the view is why `look` waited, and it is what `look` was waiting for)
 		self.look();
 	}
 
-	/// After a switch that can shorten the list: nobody's cursor may be left past its end.
 	fn clamp(&mut self) {
 		let len = self.tab().view.len();
 		let cursor = self.cursor().min(len.saturating_sub(1));
@@ -965,15 +695,10 @@ impl App {
 		self.look();
 	}
 
-	// ---- the interaction, all of it decided here ----
-
 	fn act(&mut self, action: Action, ctx: &Context) {
 		let len = self.tab().view.len();
 
 		match action {
-			// the bin's own tab takes the list's own keys (P27): the rows on screen are the bin's,
-			// so the cursor, the pages, Enter and `d`/`D` mean the bin's own things — everything
-			// else stays the keymap's, and navigation leaves the bin behind
 			Action::Up if self.in_bin() => self.bin_move(-1),
 			Action::Down if self.in_bin() => self.bin_move(1),
 			Action::Top if self.in_bin() => self.bin_seat(0),
@@ -997,7 +722,6 @@ impl App {
 			Action::Sort(by, reverse) => {
 				self.sort = (by, reverse);
 				if by == SortBy::Random {
-					// a re-press shuffles again: the seed is what makes it another draw
 					self.sort_seed = self.sort_seed.wrapping_add(1);
 				}
 				self.refresh_view();
@@ -1035,19 +759,14 @@ impl App {
 				}
 			},
 			Action::Escape => self.escape(),
-			// `i` (`z`/`Z` are its aliases): the one door to the index panel
 			Action::Index | Action::FuzzyJump => self.fuzzy_index(),
 			Action::Devices(do_) => self.devices(do_),
 			Action::Search { content } => self.fuzzy_search(content),
 			Action::Remove(permanent) => self.remove(permanent),
 			Action::Yank { cut } => self.yank(cut, ctx),
 			Action::Unyank => self.unyank(),
-			// `u` (`Ctrl+Z` is its twin, handled with the global four): take the most recent
-			// change-type task back (P33⑫)
 			Action::Undo => self.undo_last(),
-			// `T` (P35③): the cursor's door into a terminal
 			Action::TerminalHere => self.terminal_here(),
-			// `o` (P36④): the cursor row's own context menu — the right click's door
 			Action::MenuHere => self.menu_on_cursor(),
 			Action::History { back } => self.travel(back),
 			Action::Follow => self.follow(),
@@ -1065,11 +784,9 @@ impl App {
 			Action::Paste { force } => self.paste(force),
 			Action::TrashView => self.trash_view_open(),
 			Action::Compress => self.compress_open(),
-			// `K`/`J`: the keymap's own seek into the preview column.
 			Action::Seek(step) => {
 				self.preview.seek(step);
 			}
-			// `<Tab>`: the spot card §4.6.
 			Action::Spot => {
 				self.spot = !self.spot;
 				self.spot_chord = false;
@@ -1089,9 +806,6 @@ impl App {
 		self.bars_moved[0] = Some(Instant::now());
 	}
 
-	/// A single click on a row seats the cursor there — yazi's own mouse semantics, and the one
-	/// place the event path and the replay both come through. A position past the list is a click
-	/// on the blank and decides nothing.
 	fn click_row(&mut self, position: usize) {
 		if position >= self.tab().view.len() {
 			return;
@@ -1100,8 +814,6 @@ impl App {
 		self.set_cursor(position);
 	}
 
-	/// Whichever field owns the keyboard, in the same order `handle()` asks its owners: what
-	/// Ctrl+C / Ctrl+X act on (P18).
 	fn active_edit_mut(&mut self) -> Option<&mut Edit> {
 		if let Some(bulk) = &mut self.bulk {
 			return Some(&mut bulk.edit);
@@ -1129,8 +841,6 @@ impl App {
 	}
 
 	fn look(&mut self) {
-		// the bin's own tab previews its own items (P27): the directory behind it was never left,
-		// but the standing row is the bin's
 		if self.in_bin() {
 			self.look_at_trash();
 			return;
@@ -1151,11 +861,6 @@ impl App {
 			None => self.preview.clear(),
 		}
 
-		// what a sweep will want: the first screenful when a directory opens, and the cursor's
-		// neighbours on every move — images only, and warmed where no decode wants the slot first.
-		// The lists are read from the view: one that is not this directory's yet (a directory just
-		// entered, a listing not yet rebuilt) warms nothing — the rebuild comes back through here
-		// the moment it is current, which is also what fills the idle sweep's own queue (P27⑥)
 		if !self.tab().view_of.as_ref().is_some_and(|key| key.1 == dir && key.0 == Arc::as_ptr(&snapshot) as usize) {
 			return;
 		}
@@ -1174,8 +879,6 @@ impl App {
 				around.push(item);
 			}
 		}
-		// the idle sweep's own list (P27⑥'s L3): the first fifty rows, which is what a person
-		// walking the list is about to hover
 		let ahead: Vec<(PathBuf, Option<Entry>)> = (0..view.len().min(50)).filter_map(cell).collect();
 
 		self.preview.warm(&dir, &visible, &around, &ahead);
@@ -1189,9 +892,6 @@ impl App {
 		}
 	}
 
-	/// `<C-a>` / `<C-r>`: every row the view shows becomes selected, or the selection is turned
-	/// over — the view's own rows, not the directory's, so a filter and the hidden switch are
-	/// respected.
 	fn toggle_all(&mut self, on: Option<bool>) {
 		let snapshot = self.entries();
 		let view = self.tab().view.clone();
@@ -1201,8 +901,6 @@ impl App {
 		crate::app::toggled(&mut self.selection, &paths, on);
 	}
 
-	/// The `c` family: every target's own reading of the thing asked for, one per line, on the
-	/// system clipboard — and a toast that says what went there.
 	fn copy(&mut self, what: CopyWhat, ctx: &Context) {
 		let targets = self.targets();
 		if targets.is_empty() {
@@ -1244,13 +942,7 @@ impl App {
 		self.toasts.push(format!("已复制{words}（{} 项）", lines.len()), toast::Kind::Ok);
 	}
 
-	/// The plain open of `<Enter>` / `o` / yazi's own `enter`: a directory is entered, a file is
-	/// handed to the system's opener (`xdg-open`) and the window waits for nothing. open-with
-	/// keeps its own field, and nothing here touches it.
 	fn open(&mut self) {
-		// the pointer's column decides, the way the wheel does (P28's long tail): a Return with the
-		// pointer standing over the archive tree's own folder folds that folder instead of opening
-		// the file the cursor sits on
 		if self.fold_under_pointer() {
 			return;
 		}
@@ -1258,8 +950,6 @@ impl App {
 		let Some(path) = self.selected() else { return };
 
 		if !path.is_dir() {
-			// the system's own default, watched to its exit (P30): a launcher that is not there, or
-			// one that says no, is said out loud on a toast instead of being swallowed
 			crate::open::system(path, self.open_failed.0.clone());
 			return;
 		}
@@ -1269,21 +959,13 @@ impl App {
 		self.arrived();
 	}
 
-	/// `<Enter>` (P37①, the user's re-cut): the **default opener** for whatever the cursor stands
-	/// on — a file and a directory alike. A directory is handed to the default application (the
-	/// file manager) rather than stepped into; the way in is `l` and `<Right>`. A `Terminal=true`
-	/// default handler rides the machine's terminal chain (P37④); everything else goes to the
-	/// system's own opener, watched to its exit (P30).
 	fn open_default(&mut self) {
-		// the pointer's column decides, the way the wheel does (P28's long tail): a Return with the
-		// pointer standing over the archive tree's own folder folds that folder instead of opening
 		if self.fold_under_pointer() {
 			return;
 		}
 
 		let Some(path) = self.selected() else { return };
 		if let Some(program) = self.default_terminal(&path) {
-			// `Terminal=true` (P37④): the program runs inside the machine's own terminal
 			let folder = path.parent().map(Path::to_owned).unwrap_or_else(|| self.tab().path().to_owned());
 			self.spawn_in_terminal(program, folder);
 			return;
@@ -1296,9 +978,6 @@ impl App {
 		crate::open::system(path, self.open_failed.0.clone());
 	}
 
-	/// The person's own default handler for a path, when it is a `Terminal=true` entry (P37④):
-	/// the menu's own `exec_argv` door and the machine's own directories, read fresh. `None` when
-	/// nothing is preferred, or the preferred one wants no terminal.
 	fn default_terminal(&self, path: &Path) -> Option<Vec<String>> {
 		let name = path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned());
 		let mime = crate::mime::guess(&name, path.is_dir());
@@ -1308,9 +987,6 @@ impl App {
 		crate::desktop::default_terminal(&entries, &self.preferences_text(), &self.system_preferences_text(), &mime, path)
 	}
 
-	/// The tab has arrived in a new directory: the trail notes it — and a bin the tab was showing is
-	/// left behind, because a directory change is what walking away means (P27). The left column's
-	/// own seat and scroll go with it (P33⑧): a new parent is a new column.
 	fn arrived(&mut self) {
 		self.tab_mut().trash = None;
 		self.tab_mut().parent = ParentView::default();
@@ -1320,8 +996,6 @@ impl App {
 		self.look();
 	}
 
-	/// Whether the pointer stands on a folder of the preview column's archive tree — and folded it
-	/// (P28's long tail). The replay's own pointer counts, the way the wheel's routing counts it.
 	fn fold_under_pointer(&mut self) -> bool {
 		let Some(at) = self.replay_at.or(self.hover) else { return false };
 		let Some(column) = chrome::columns(self.body, self.shares).preview else { return false };
@@ -1332,8 +1006,6 @@ impl App {
 		self.preview.archive_fold_at(column, at)
 	}
 
-	/// `f`: the filter field opens on the current pattern (or clears one that is on); typing
-	/// re-filters the list as it goes, Enter keeps what is typed and `Esc` clears it.
 	fn filter_open(&mut self) {
 		if self.tab().filter.is_some() && self.filter.is_none() {
 			self.tab_mut().filter = None;
@@ -1346,20 +1018,15 @@ impl App {
 		self.filter = Some(Edit::new(current));
 	}
 
-	/// `/`: the find box opens on the pattern the list is already carrying, so a second `/` picks
-	/// the search up where it was left.
 	fn find_open(&mut self) {
 		self.find = Some(Edit::new(self.find_last.clone().unwrap_or_default()));
 	}
 
-	/// The pattern the list colours by: what is being typed, or what was kept (P21).
 	fn find_pattern(&self) -> Option<String> {
 		let live = self.find.as_ref().map(|edit| edit.text.clone());
 		live.or_else(|| self.find_last.clone()).filter(|pattern| !pattern.is_empty())
 	}
 
-	/// `n` / `N`: the cursor walks to the next row whose name holds the pattern, or the one before
-	/// it — and stays where it is when there is none.
 	fn find_arrow(&mut self, forward: bool) {
 		let Some(pattern) = self.find_pattern() else {
 			self.toasts.push("先按 / 输入要查的内容", toast::Kind::Warn);
@@ -1373,16 +1040,12 @@ impl App {
 		}
 	}
 
-	/// The pattern as typed: the tab's filter is what the view is rebuilt from, so every keystroke
-	/// goes through one place.
 	fn filter_apply(&mut self, pattern: Option<String>) {
 		self.tab_mut().filter = pattern;
 		self.refresh_view();
 		self.clamp();
 	}
 
-	/// `g f` (P21's table): keep only the symbolic links in the list, and put everything back when
-	/// pressed again — a switch, the way the hidden-files one is.
 	fn toggle_symlinks(&mut self) {
 		let on = !self.tab().symlinks;
 		self.tab_mut().symlinks = on;
@@ -1391,8 +1054,6 @@ impl App {
 		self.toasts.push(if on { "只显示符号链接" } else { "显示全部项目" }, toast::Kind::Ok);
 	}
 
-	/// `<C-u>`/`<C-d>`/`<C-b>`/`<C-f>`/`<PageUp>`/`<PageDown>`/`<S-PageUp>`/`<S-PageDown>`: the
-	/// cursor walks half the view or the whole of it, and the list follows.
 	fn page(&mut self, full: bool, back: bool) {
 		let rows = self.tab().scroll.rows.max(1);
 		let step = if full { rows.saturating_sub(1).max(1) } else { (rows / 2).max(1) };
@@ -1403,7 +1064,6 @@ impl App {
 		self.set_cursor(next.clamp(0, len.saturating_sub(1) as isize) as usize);
 	}
 
-	/// `l`: into the directory under the cursor — a file is left alone (that is what `enter` is for).
 	fn enter_dir(&mut self) {
 		let Some(entry) = self.selected_entry() else { return };
 		if entry.dir {
@@ -1411,8 +1071,6 @@ impl App {
 		}
 	}
 
-	/// `a`: a name, and the name decides what it is — a file when it has an extension, a directory
-	/// when it has none (P21's table).
 	fn create_open(&mut self) {
 		self.prompt = Some(Prompt {
 			title:  "创建（带后缀=文件，不带=目录）".to_owned(),
@@ -1421,8 +1079,6 @@ impl App {
 		});
 	}
 
-	/// `p` / `P`: what was held put down beside the cursor. A name already standing at the
-	/// destination is asked about first unless the keymap forced it (P21's table).
 	fn paste(&mut self, force: bool) {
 		let Some(yank) = self.yank.clone() else {
 			self.toasts.push("先复制或剪切（y / x）", toast::Kind::Warn);
@@ -1450,8 +1106,6 @@ impl App {
 		self.paste_job = Some(paste::run(yank.paths.clone(), dest, yank.cut, force));
 	}
 
-	/// `a`'s Enter: the typed name becomes a file when it carries an extension and a directory when
-	/// it does not; the listing is read again and the cursor waits for the new row (P21's table).
 	fn create_submit(&mut self, typed: &str) {
 		let name = typed.trim();
 		if name.is_empty() {
@@ -1460,7 +1114,6 @@ impl App {
 
 		let cwd = self.tab().path().to_owned();
 		let path = cwd.join(name);
-		// an extension is a dot with something after it: `notes` is a directory, `notes.txt` a file
 		let file = Path::new(name)
 			.file_name()
 			.and_then(|name| name.to_str())
@@ -1478,8 +1131,6 @@ impl App {
 		}
 	}
 
-	/// `M`'s panel acting on a door: the standing device for mount/unmount, the cwd's own device
-	/// for the remount and the jump, and a toast for the URI family (P21's second wave).
 	fn device_door(&mut self, door: DeviceDoor) {
 		match door {
 			DeviceDoor::Mount | DeviceDoor::MountAndJump => {
@@ -1503,7 +1154,6 @@ impl App {
 		}
 	}
 
-	/// The device the panel's cursor stands on, if the panel is up.
 	fn device_standing(&self) -> Option<String> {
 		let fuzzy = self.fuzzy.as_ref()?;
 		let item = fuzzy.hits.get(fuzzy.at).and_then(|hit| fuzzy.items.get(hit.at))?;
@@ -1514,7 +1164,6 @@ impl App {
 		}
 	}
 
-	/// `M`'s panel acting on one device: mount (and go, when the key asked), or unmount and eject.
 	fn device_on(&mut self, id: String, unmount: bool, force: bool, jump: bool) {
 		self.fuzzy_close();
 		let (tx, rx) = std::sync::mpsc::channel();
@@ -1539,7 +1188,6 @@ impl App {
 		);
 	}
 
-	/// The paste's answer: a toast, and the directory read again so the new names show.
 	fn paste_poll(&mut self, ctx: &Context) {
 		let Some(job) = self.paste_job.take() else { return };
 
@@ -1552,8 +1200,6 @@ impl App {
 				}
 				self.cache.forget(self.tab().path());
 
-				// the toast carries the undo of exactly this paste (P33⑫): the copies go to the
-				// bin, or the moved set walks home — the pairs as they landed
 				let word = if cut { "已移动" } else { "已复制" };
 				let undo = if cut {
 					Undo::Moved { pairs: done.pairs }
@@ -1570,8 +1216,6 @@ impl App {
 		}
 	}
 
-	/// `L`'s answer: a link into the parent column's own directory, named after what it points at
-	/// — a name already standing there is refused rather than overwritten (P21's table).
 	fn link_to(&mut self, kind: LinkKind, target: PathBuf) {
 		let Some((dir, _)) = self.parent_view() else {
 			self.toasts.push("没有可放置链接的另一列", toast::Kind::Warn);
@@ -1598,7 +1242,6 @@ impl App {
 					LinkKind::Hard => "硬链接",
 					_ => "符号链接",
 				};
-				// one created link is one undoable change (P33⑫): the toast carries taking it away
 				self.note(
 					format!("已创建{what} {} → {}", link.display(), target.display()),
 					Undo::Link(vec![ link ]),
@@ -1608,10 +1251,6 @@ impl App {
 		}
 	}
 
-	/// The link family: each target gets a link beside it, named after itself, in the parent
-	/// column's own directory — the other pane of this three-column world, and the place a
-	/// link is usually wanted. `)` links to the absolute path, `(` to a relative one, `*` makes a
-	/// hard link; a name already taken gets a toast rather than an overwrite.
 	fn link(&mut self, kind: crate::keys::LinkKind) {
 		use crate::keys::LinkKind;
 
@@ -1638,8 +1277,6 @@ impl App {
 
 			let result = match kind {
 				LinkKind::Absolute => std::os::unix::fs::symlink(path, &link),
-				// a relative symlink stores the target as the walk from its own directory:
-				// `../paper/main.md`, not the absolute path
 				LinkKind::Relative => std::os::unix::fs::symlink(relative_target(&dir, path), &link),
 				LinkKind::Hard => std::fs::hard_link(path, &link),
 			};
@@ -1662,13 +1299,10 @@ impl App {
 				LinkKind::Hard => "硬链接",
 				_ => "符号链接",
 			};
-			// the whole batch is one change (P33⑫): one undo takes every created link away
 			self.note(format!("已创建 {made} 个{what}（{}）", dir.display()), Undo::Link(created));
 		}
 	}
 
-	/// `g h` / `g a` / … : the well-known directories, with `~` expanded the way a shell expands it
-	/// — a path that is not there gets a toast rather than a silent nothing.
 	fn cd(&mut self, path: &str) {
 		let Some(path) = expand_tilde(path, std::env::var_os("HOME").map(PathBuf::from)) else {
 			self.toasts.push(format!("{path} 不存在"), toast::Kind::Warn);
@@ -1682,14 +1316,6 @@ impl App {
 		}
 	}
 
-	/// `enter --bypass`: the plain open, and then — while the directory just entered holds a
-	/// single child and that child is a directory — it keeps descending, so an `a/b/c` chain costs
-	/// one key rather than three. The walk stops at the first directory with anything else in it.
-	///
-	/// The chain is read right here, on this thread: the point of the key is to arrive in one
-	/// press, and a frame's worth of async reads per link would take that promise away. It is at
-	/// most 64 bounded `read_dir`s, and only when a person asks to enter — if a chain on a slow
-	/// mount ever hurts, N3 can defer it.
 	fn smart_enter(&mut self) {
 		let before = self.tab().path().to_owned();
 		self.open();
@@ -1711,8 +1337,6 @@ impl App {
 		}
 	}
 
-	/// `g f`: the cursor's own symlink is resolved and gone to — a directory is entered, a file is
-	/// revealed where it lives. A path that is no link says so.
 	fn follow(&mut self) {
 		let Some(path) = self.selected() else { return };
 		let Ok(target) = std::fs::read_link(&path) else {
@@ -1732,7 +1356,6 @@ impl App {
 		}
 	}
 
-	/// `H` / `L`: away along this tab's own trail of directories.
 	fn travel(&mut self, back: bool) {
 		let Some(path) = self.tab_mut().history.travel(back) else { return };
 
@@ -1743,21 +1366,14 @@ impl App {
 		self.look();
 	}
 
-	/// `h`: up one directory — always the directory the left column is already showing, whether
-	/// that is the step the stack came down or, at the bottom of the stack, the cwd's own
-	/// filesystem parent. A `g a`/`g d` jump resets the stack, so `h` has to leave from the
-	/// bottom too (P18: `h` is never a no-op).
 	fn leave(&mut self) {
 		if self.tab().stack.len() == 1 {
-			// the bottom: the filesystem parent, which the left column may well have read already
 			let Some((parent, seat)) = self.parent_view() else { return };
 
 			let left = self.tab().path().to_owned();
 			let name = file_name(&left);
 			let loading = self.cache.get(&parent).loading;
 
-			// an unread listing cannot say which row the left directory is on yet: the first row
-			// now, and the seat waits for the names (below)
 			let waited = loading.then_some(name).flatten().map(|name| (parent.clone(), name));
 			self.tab_mut().stack = vec![ View { path: parent, cursor: seat } ];
 			self.tab_mut().seat = waited;
@@ -1770,8 +1386,6 @@ impl App {
 		let snapshot = self.entries();
 		let parent = self.tab().stack.last().expect("the stack is never empty");
 
-		// the cursor goes back to the directory we came out of; a listing that has not landed
-		// cannot be looked through, so the name is left waiting for it
 		let (cursor, seat) = match snapshot.entries.iter().position(|entry| parent.path.join(&entry.name) == left.path) {
 			Some(index) => (index, None),
 			None => (parent.cursor, file_name(&left.path).map(|name| (parent.path.clone(), name))),
@@ -1784,10 +1398,7 @@ impl App {
 		self.arrived();
 	}
 
-	// ---- the tabs (§2.4) ----
-
 	fn tab_create(&mut self) {
-		// the table's ceiling: ten tabs, and the eleventh press says so rather than making one
 		if self.tabs.len() >= TAB_LIMIT {
 			self.toasts.push(format!("最多 {TAB_LIMIT} 个标签页"), toast::Kind::Warn);
 			return;
@@ -1817,7 +1428,6 @@ impl App {
 
 	fn tab_close(&mut self, ctx: &Context) {
 		if self.tabs.len() == 1 {
-			// the last tab is the window: closing it quits, the way the keymap promises
 			ctx.send_viewport_cmd(ViewportCommand::Close);
 			return;
 		}
@@ -1843,14 +1453,10 @@ impl App {
 		self.rename_focus = false;
 	}
 
-	// ---- the bulk editor (§4.1) and the in-place rename (§4.3) ----
-
 	fn bulk_open(&mut self) {
 		self.bulk = Some(BulkEditor { edit: Edit::new(String::new()), lines: Vec::new() });
 	}
 
-	/// The plan is re-read whenever the column changes: the preview, the counts and the button's
-	/// words all come from it, and nothing is decided twice.
 	fn bulk_replan(&mut self) {
 		let dir = self.tab().path().to_owned();
 		if let Some(bulk) = &mut self.bulk {
@@ -1872,19 +1478,15 @@ impl App {
 			toast::Kind::Ok,
 		);
 
-		// what could not be written goes to the status bar's own task group, one line at a time
 		for (line, why) in report.failures {
 			self.tasks.push(Progress { title: format!("创建失败：{line}"), fraction: None, rate: Some(why) });
 		}
 	}
 
-	/// Start an in-place rename at the seat the keymap's own variant asks for (§4.3).
 	fn rename_open(&mut self, at: RenameAt) {
 		let Some(path) = self.selected() else { return };
 		let Some(name) = path.file_name().map(|name| name.to_string_lossy().into_owned()) else { return };
 
-		// the extension is what `before_ext` and `stem` seats are placed against; a dotfile's
-		// leading dot is not one
 		let dot = name.rfind('.').filter(|dot| *dot > 0);
 		let text = match at {
 			RenameAt::EmptyAll => String::new(),
@@ -1903,8 +1505,6 @@ impl App {
 		self.rename_check();
 	}
 
-	/// The conflict check of §4.3, run at each keystroke: a name that is empty, has a separator, or
-	/// is already taken by something else turns the field red and keeps Enter from landing.
 	fn rename_check(&mut self) {
 		let Some(rename) = &mut self.item_rename else { return };
 		let name = rename.edit.text.as_str();
@@ -1925,7 +1525,6 @@ impl App {
 	fn rename_commit(&mut self) {
 		let Some(rename) = self.item_rename.take() else { return };
 		if rename.note.is_some() {
-			// refused, and the field stays where it was to be mended
 			self.item_rename = Some(rename);
 			return;
 		}
@@ -1945,7 +1544,6 @@ impl App {
 					self.selection.insert(new.clone());
 				}
 
-				// a rename is a change a person may want back (P33⑫): the toast carries it
 				let said = new.file_name().map_or_else(|| new.display().to_string(), |name| name.to_string_lossy().into_owned());
 				self.note(format!("已重命名为 {said}"), Undo::Rename { from: old, to: new });
 			}
@@ -1953,17 +1551,11 @@ impl App {
 		}
 	}
 
-	/// Double-clicking a row's name is the mouse's way into the same editor, seated like `r r`.
 	fn rename_row(&mut self, at: usize) {
 		self.set_cursor(at);
 		self.rename_open(RenameAt::BeforeExt);
 	}
 
-	// ---- the command line (§4.8) ----
-
-	/// Esc: put away what is open, or let the selection go when nothing is. The help closing on
-	/// its own is the raw key's doing, so that stays quick even with a keymap file that cannot be
-	/// read at all.
 	fn escape(&mut self) {
 		if self.output.take().is_some() {
 			return;
@@ -1979,14 +1571,11 @@ impl App {
 			self.selection.clear();
 		}
 
-		// nothing else was open: a toast is what Esc takes away (P30's own message among them)
 		if !self.toasts.is_empty() {
 			self.toasts.clear();
 		}
 	}
 
-	/// A command goes out: recorded in the history, run off this thread with `sh -c`, and its
-	/// answer opens the output sheet when it lands.
 	fn shell_run(&mut self, command: &str) {
 		let cwd = self.tab().path().to_owned();
 		let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2016,8 +1605,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// Tab: the candidates for the last token appear, or the standing one steps forward — either
-	/// way the line is rewritten as it moves, the way a completion should read.
 	fn cmdline_complete(&mut self) {
 		let cwd = self.tab().path().to_owned();
 		let Some(mut cmdline) = self.cmdline.take() else { return };
@@ -2038,8 +1625,6 @@ impl App {
 		self.cmdline = Some(cmdline);
 	}
 
-	/// ↑ / ↓: they walk the completions when one is up, and the history when none is — the
-	/// keymap's own `[input]` recall.
 	fn cmdline_recall(&mut self, step: isize) {
 		let history = &self.history.lines;
 		let Some(cmdline) = &mut self.cmdline else { return };
@@ -2067,8 +1652,6 @@ impl App {
 		cmdline.edit = Edit::new(history[next as usize].clone());
 	}
 
-	/// The candidates are re-read whenever the line moves under a list that is already up: a
-	/// stale list would offer strangers.
 	fn cmdline_refresh(&mut self) {
 		let cwd = self.tab().path().to_owned();
 		let Some(cmdline) = &mut self.cmdline else { return };
@@ -2080,9 +1663,6 @@ impl App {
 		cmdline.comp = Completions::new(complete::token_start(&cmdline.edit.text), items);
 	}
 
-	// ---- open-with (§4.4) ----
-
-	/// The modal takes whatever the cursor stands on, or the selection when there is one.
 	fn openwith_open(&mut self) {
 		let paths = self.targets();
 		if paths.is_empty() {
@@ -2096,22 +1676,14 @@ impl App {
 		self.openwith = Some(OpenWith { paths, name, edit: Edit::new(String::new()), comp: None, recall: None });
 	}
 
-	/// Where the menu stands: the pointer's own place when there is one, the row's corner when a
-	/// replay was the one asking.
 	fn menu_anchor(&self, fallback: Pos2) -> Pos2 {
-		// the pointer's own place when there is one; a replay's stands over it, and a keyboard
-		// caller passes its own fallback with `menu_fit` below
 		self.menu_fit(self.replay_at.or(self.hover).unwrap_or(fallback))
 	}
 
-	/// The clamp every menu's place takes, whoever asked: it stays inside the body.
 	fn menu_fit(&self, at: Pos2) -> Pos2 {
 		pos2(at.x.clamp(self.body.min.x + 8.0, self.body.max.x - 208.0), at.y.clamp(self.body.min.y + 8.0, self.body.max.y - 160.0))
 	}
 
-	/// The menu's target for a visible row: the selection when the row is inside one, else the
-	/// row itself — seated first, the way a click seats. Shared by the right click, the replay
-	/// and `o` (P36④), so the three doors cannot drift apart.
 	fn menu_target(&mut self, position: usize) -> Option<crate::menu::Target> {
 		let snapshot = self.entries();
 		let dir = self.tab().path().to_owned();
@@ -2132,26 +1704,20 @@ impl App {
 		self.menu_open(target, self.menu_anchor(at));
 	}
 
-	/// `o` (P36④): the cursor row's own context menu — the same panel and the same door a right
-	/// click opens, for hands without a second button. It stands at the row itself (the keyboard
-	/// asked; the pointer has no say), clamped inside the body like every menu.
 	fn menu_on_cursor(&mut self) {
 		let cursor = self.tab().stack.last().map_or(0, |view| view.cursor);
 		let Some(position) = self.tab().view.iter().position(|at| *at == cursor) else { return };
 		let Some(target) = self.menu_target(position) else { return };
 
-		// the row's own place in the list: the same arithmetic the draw and the mouse use
 		let list = chrome::columns(self.body, self.shares).current;
 		let top = list.min.y + (position as f32 - self.tab().scroll.offset) * ROW_HEIGHT;
 		self.menu_open(target, self.menu_fit(pos2(list.min.x, top)));
 	}
 
-	/// The blank's own menu: the window's directory (P31).
 	fn menu_on_blank(&mut self, at: Pos2) {
 		self.menu_open(crate::menu::Target::Folder(self.tab().path().to_owned()), self.menu_anchor(at));
 	}
 
-	/// Open the row's own menu (P31) on what a right click was aimed at.
 	fn menu_open(&mut self, target: crate::menu::Target, anchor: Pos2) {
 		let yank = self.yank.is_some();
 		crate::metrics::menu(&format!("{} {} 项", target.title(), crate::menu::main_items(&target, yank).len()));
@@ -2171,18 +1737,11 @@ impl App {
 		});
 	}
 
-	/// The menu's own keys (P31; the applications page is search-first since P35's addendum, the
-	/// way the dialog it mirrors is): `j`/`k` walk — the arrows too — Enter takes, Esc backs out
-	/// one page and closes the last; on the applications page the letters are the query instead,
-	/// the arrows walk, and Esc clears the query before it backs out.
 	fn menu_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let page = self.menu.as_ref().map(|menu| menu.page);
 		let Some(page) = page else { return };
-		// the panel's own window (P36③): what the arrows and the wheel keep in sight
 		let vis = self.menu.as_ref().map_or(0, |menu| menu.visible_rows(self.body.height()));
 
-		// the applications page's query: what the layout typed lands in it (P35), and a query
-		// starts a new list at the top (P36③) — the standing row and the window both go home
 		if page == crate::menu::Page::Apps
 			&& !typed.is_empty()
 			&& let Some(menu) = &mut self.menu
@@ -2198,9 +1757,6 @@ impl App {
 
 			match key {
 				Key::Escape => {
-					// one page at a time back (P31): the confirm to the list, the list to the
-					// items, the items away — and on the applications page a query standing is
-					// cleared first (P35's addendum, the index panel's own two-stage habit)
 					if page == crate::menu::Page::Apps && self.menu.as_ref().is_some_and(|menu| !menu.query.text.is_empty()) {
 						if let Some(menu) = &mut self.menu {
 							menu.query = crate::edit::Edit::new(String::new());
@@ -2210,8 +1766,6 @@ impl App {
 					} else if page == crate::menu::Page::Main {
 						self.menu = None;
 					} else if let Some(menu) = &mut self.menu {
-						// Esc steps back a page: the applications list to the items, and the items
-						// away (P37③: there is no page between a choice and its launch any more)
 						menu.page = crate::menu::Page::Main;
 						menu.at = 0;
 					}
@@ -2223,7 +1777,6 @@ impl App {
 						menu.scroll = 0;
 					}
 				}
-				// the letters are the query's on the applications page: only the arrows walk
 				Key::J | Key::ArrowDown if page != crate::menu::Page::Apps => {
 					if let Some(menu) = &mut self.menu {
 						menu.step(1);
@@ -2243,15 +1796,11 @@ impl App {
 						menu.follow(vis);
 					}
 				}
-				// `l` is the menu's own step-into (P37②): on the 打开方式 row it opens the
-				// applications list, the same door Enter takes
 				Key::L if page == crate::menu::Page::Main => {
 					if self.menu.as_ref().is_some_and(|menu| menu.standing_open_with()) {
 						self.menu_pick(ctx);
 					}
 				}
-				// `Ctrl+Enter` writes the preference down too (P38②): 总是 is back — the type's default is
-				// set (the merge, P31's own) and then the app runs, the way the confirm page used to
 				Key::Enter if page == crate::menu::Page::Apps && modifiers.ctrl => self.menu_launch(true),
 				Key::Enter => self.menu_pick(ctx),
 				Key::Q if !modifiers.ctrl && page != crate::menu::Page::Apps => self.menu = None,
@@ -2262,7 +1811,6 @@ impl App {
 		}
 	}
 
-	/// Take the standing row of whichever page is up (P31).
 	fn menu_pick(&mut self, ctx: &Context) {
 		let Some(menu) = self.menu.as_ref() else { return };
 		let standing = menu.at;
@@ -2280,27 +1828,16 @@ impl App {
 		}
 	}
 
-	/// The menu's own 复制/剪切 (P33⑱): the very function `y`/`x` run. The right-clicked row is the
-	/// target — or the whole selection when the click landed inside one, because the dispatch seats
-	/// the cursor and `targets()` reads the same two cases every other file operation does.
 	fn menu_copy(&mut self, cut: bool, ctx: &Context) {
 		self.menu = None;
 		self.yank(cut, ctx);
 	}
 
-	/// The menu's own 粘贴 (P33⑱): the same door `p` uses, and its destination is the window's own
-	/// directory — the parent of whatever row was right-clicked, never inside it. Right-clicking a
-	/// folder offers a paste beside it, at its own level, which is the user's own rule.
 	fn menu_paste(&mut self) {
 		self.menu = None;
 		self.paste(false);
 	}
 
-	/// `在终端中打开` (P31's chain): the folder's own terminal, its cwd that folder — found off
-	/// this thread, and a machine with no terminal at all says so on a toast.
-	/// `T` (P35③): the cursor's row in a terminal — the row has to be a folder, and it becomes the
-/// terminal's own cwd. Anything else says so rather than guessing at a parent (the user's own
-/// ruling: 须是文件夹).
 	fn terminal_here(&mut self) {
 		let Some(path) = self.selected() else { return };
 		if !path.is_dir() {
@@ -2311,12 +1848,6 @@ impl App {
 		self.open_terminal(path);
 	}
 
-	/// The terminal chain (P31's own, shared with the menu's `在终端中打开`): the folder's own
-	/// terminal, found off this thread — `xdg-terminal-exec`, the desktop's answer, `$TERMINAL`,
-	/// the four names — and a machine with no terminal at all says so on a toast. The dry switch
-	/// (P35③'s harness) records what would have run instead of opening a window.
-	/// The terminal chain (P31's own, shared by `T`, the menu's `在终端中打开`, and a
-/// `Terminal=true` handler's launch — P35): the machine's terminal, found off this thread.
 	fn terminal_chain() -> Option<Vec<String>> {
 		let xdg = crate::open::ask("xdg-mime", &[ "query", "default", "x-scheme-handler/terminal" ]);
 		let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -2357,9 +1888,6 @@ impl App {
 		});
 	}
 
-	/// A `Terminal=true` handler's launch (P35's gio alignment): the program's own argv is run
-	/// inside the machine's terminal — the same chain as everywhere else — with the target
-	/// file's directory as the cwd. A machine with no terminal says so, the way `T` does.
 	fn spawn_in_terminal(&mut self, program: Vec<String>, folder: PathBuf) {
 		let note = self.menu_note.0.clone();
 		let record = self.terminal_log.0.clone();
@@ -2393,8 +1921,6 @@ impl App {
 		});
 	}
 
-	/// The menu's own `在终端中打开` (P31): the same chain as `T`, on the folder the menu was
-	/// aimed at.
 	fn menu_terminal(&mut self) {
 		let Some(menu) = self.menu.as_ref() else { return };
 		let Some(folder) = menu.target.folder() else { return };
@@ -2403,8 +1929,6 @@ impl App {
 		self.open_terminal(folder);
 	}
 
-	/// `打开方式…` (P31's own panel): what this machine has for the target's type, in the order
-	/// the person's own preferences put them.
 	fn menu_apps(&mut self) {
 		let Some(menu) = self.menu.as_ref() else { return };
 		let mime = menu.target.mime();
@@ -2413,17 +1937,11 @@ impl App {
 		let entries = crate::desktop::scan(&crate::desktop::app_dirs(home.as_deref()));
 		let text = crate::config::Config::mimeapps().and_then(|at| std::fs::read_to_string(at).ok()).unwrap_or_default();
 		let preferred = crate::desktop::preferred_in(&text, &mime);
-		// `[Added Associations]` join the candidates too, the way a desktop's own registry lets
-		// them (P35's gio alignment)
 		let added = crate::desktop::added_in(&text, &mime);
-		// the candidates ride on the inheritance closure (P33⑥): a markdown file is answered by
-		// the plain-text editors, the way a desktop manager answers it
 		let types = crate::mime::closure(&mime);
 		let path_env = std::env::var("PATH").unwrap_or_default();
 		let handlers: Vec<crate::desktop::Entry> =
 			crate::desktop::handlers(&entries, &types, &preferred, &added, &path_env).into_iter().cloned().collect();
-		// every application behind the recommendations (P35's addendum): non-NoDisplay, TryExec
-		// satisfied, by name — browsers and everything else, so a person picks what they like
 		let all = crate::desktop::all_apps(&entries, &path_env);
 
 		crate::metrics::menu(&format!("apps {} {} 个", mime, handlers.len()));
@@ -2438,13 +1956,6 @@ impl App {
 		}
 	}
 
-	/// A choice needs an answer: `仅一次` or `总是` (P31).
-	/// `<Enter>` on the applications page (P37③, the user's own re-cut): the standing application
-	/// runs at once — 仅一次, no page between. `Ctrl+Enter` (P38②) writes the preference down first
-	/// — `总是`, back on its own chord — through the same merge a real window has always used;
-	/// a test's preferences live in the seam and the person's own file is only ever written when
-	/// no seam stands (the real window). A `Terminal=true` entry rides the machine's terminal
-	/// chain (P35), and a headless test hears it through the dry record instead of a window.
 	fn menu_launch(&mut self, always: bool) {
 		let Some(menu) = self.menu.as_ref() else { return };
 		let Some(entry) = menu.app_rows().get(menu.apps_at).map(|row| row.entry.clone()) else { return };
@@ -2468,7 +1979,6 @@ impl App {
 
 		let argv = crate::desktop::exec_argv(&entry.exec, &path, &mime);
 		if entry.terminal {
-			// `Terminal=true` (P35): the program runs inside the machine's own terminal
 			let folder = path.parent().map(Path::to_owned).unwrap_or_else(|| self.tab().path().to_owned());
 			self.spawn_in_terminal(argv, folder);
 		} else {
@@ -2476,43 +1986,30 @@ impl App {
 		}
 	}
 
-	/// The preferences the window reads its defaults from (P38④): the test seam when a test has
-/// handed one in, the person's own ledger (`~/.config/mimeapps.list`) otherwise — read live, by
-/// mtime, through `config::mimeapps_read`. The merge-write side of `Ctrl+Enter` lands here too.
 	fn preferences_text(&self) -> String {
 		self.mimeapps_for_tests.clone().or_else(|| self.mimeapps_path().and_then(|at| crate::config::mimeapps_read(&at))).unwrap_or_default()
 	}
 
-	/// The person's level ledger path (P38④): the test's own when it named one, the spec's place
-	/// otherwise — the merge-write of `Ctrl+Enter` lands on the same path.
 	fn mimeapps_path(&self) -> Option<PathBuf> {
 		self.mimeapps_path_for_tests.clone().or_else(crate::config::Config::mimeapps)
 	}
 
-	/// The frecency store's own path (P40): the test's own when it named one, the state dir
-	/// otherwise.
 	fn frecency_path(&self) -> Option<PathBuf> {
 		self.frecency_path_for_tests.clone().or_else(|| crate::config::Config::state("frecency.json"))
 	}
 
-	/// The store written where `frecency_path` says: the seam's own file for a test, the state
-	/// dir's for the window.
 	fn frecency_save(&self) {
 		if let Some(at) = self.frecency_path() {
 			self.frecency.save_at(&at);
 		}
 	}
 
-	/// The desk's ledger at the system level (P38④): read live like the person's own, and only
-	/// ever behind it.
 	fn system_preferences_text(&self) -> String {
 		let at = self.mimeapps_system_path_for_tests.clone().unwrap_or_else(crate::config::mimeapps_system);
 
 		crate::config::mimeapps_read(&at).unwrap_or_default()
 	}
 
-	/// An opening that failed comes back here (P30): the toast says which file has no program set
-	/// to open it — warn-coloured, gone on its own, and Esc or a click takes it away sooner.
 	fn open_poll(&mut self, ctx: &Context) {
 		let mut failed: Vec<PathBuf> = Vec::new();
 		while let Ok(path) = self.open_failed.1.try_recv() {
@@ -2526,7 +2023,6 @@ impl App {
 			ctx.request_repaint();
 		}
 
-		// and what a menu action could not do (P31): a machine with no terminal says so
 		while let Ok(note) = self.menu_note.1.try_recv() {
 			crate::metrics::menu(&format!("note {note}"));
 			self.toasts.push(note, toast::Kind::Warn);
@@ -2534,8 +2030,6 @@ impl App {
 		}
 	}
 
-	/// What an operation acts on: the selection when there is one, the cursor's own item
-	/// otherwise — the rule every file operation of this window reads from.
 	fn targets(&self) -> Vec<PathBuf> {
 		if self.selection.is_empty() {
 			return self.selected().into_iter().collect();
@@ -2566,8 +2060,6 @@ impl App {
 		self.openwith = Some(open);
 	}
 
-	/// ↑ / ↓ recall the history by recency while no completion is up, and walk the list while one
-	/// is — the same rule the command line keeps.
 	fn openwith_recall(&mut self, step: isize) {
 		let commands: Vec<String> = self.open_history.entries.iter().map(|entry| entry.command.clone()).collect();
 		let Some(open) = &mut self.openwith else { return };
@@ -2598,8 +2090,6 @@ impl App {
 		open.edit = Edit::new(commands[next as usize].clone());
 	}
 
-	/// A command that is known goes out with the paths and is forgotten about; one that is not is
-	/// answered now, in the field, rather than by nothing at all (§4.4).
 	fn openwith_submit(&mut self) {
 		let Some(open) = self.openwith.take() else { return };
 		let command = open.edit.text.trim().to_owned();
@@ -2619,8 +2109,6 @@ impl App {
 		open::spawn(&command, &open.paths);
 		self.toasts.push(format!("已交给 {command}：{}", open.name), toast::Kind::Ok);
 	}
-
-	// ---- the bookmarks (§5.1–§5.3) and the fuzzy panel ----
 
 	fn go(&mut self, path: PathBuf) {
 		if path.is_dir() {
@@ -2657,7 +2145,6 @@ impl App {
 		}
 	}
 
-	/// The undo link was followed: the state goes back to what it was when the toast was born.
 	fn run_undo(&mut self, undo: Undo) {
 		match undo {
 			Undo::BookmarkSave(name) => {
@@ -2671,7 +2158,6 @@ impl App {
 				self.fuzzy_rebuild();
 			}
 			Undo::FrecencyDelete { path, score, last } => {
-				// P40: the score and the clock come back whole — the row ranks where it ranked
 				self.frecency.put(frecency::Entry { path, score, last });
 				self.frecency_save();
 				self.fuzzy_rebuild();
@@ -2680,9 +2166,6 @@ impl App {
 				let words = "已从回收站恢复".to_owned();
 				self.trash_job = Some(TrashJob::Restore(trash::restore(paths.clone()), paths, words));
 			}
-			// P33⑫'s own table: a copy-paste's undo is the copies going to the bin (the mover
-			// runs on its own thread like every other), a cut-paste's is the moved set walking
-			// home, a rename's is the rename back, and a link's is the link taken away
 			Undo::Paste { landed } => {
 				self.undo_job = Some(UndoJob::Discard(trash::delete(landed)));
 			}
@@ -2706,7 +2189,6 @@ impl App {
 			Undo::Link(links) => {
 				let mut gone = 0usize;
 				for link in &links {
-					// a link goes as a link: the thing it points at is never what is removed
 					if std::fs::remove_file(link).is_ok() {
 						gone += 1;
 					}
@@ -2726,9 +2208,6 @@ impl App {
 		}
 	}
 
-	/// A change-type task that can be taken back (P33⑫): it joins the undo stack — ten deep, the
-	/// oldest going first — and its own toast carries the same undo as a link. The stack and the
-	/// toast hold equal copies of one action; either door takes the other's link away.
 	fn note(&mut self, text: String, undo: Undo) {
 		self.undo.push_back(undo.clone());
 		if self.undo.len() > UNDO_DEPTH {
@@ -2738,15 +2217,12 @@ impl App {
 		self.toasts.push_with_undo(text, toast::Kind::Ok, Some(undo));
 	}
 
-	/// `Ctrl+Z` / `u`: the most recent change-type task, taken back. Nothing on the stack is
-	/// nothing said (P33⑫).
 	fn undo_last(&mut self) {
 		let Some(undo) = self.undo.pop_back() else { return };
 		self.toasts.take_matching(&undo);
 		self.run_undo(undo);
 	}
 
-	/// The undo's own answers, read every frame like every other mover's (P33⑫).
 	fn undo_poll(&mut self, ctx: &Context) {
 		let Some(job) = self.undo_job.take() else { return };
 
@@ -2774,13 +2250,6 @@ impl App {
 		}
 	}
 
-	// ---- the bin (§ d/D and the R b view) ----
-
-	/// `d` goes to the system bin without a question — the spec's own rule, because a trash
-	/// delete is undone by its toast. `D` is permanent, and permanent asks first (§4.5).
-	/// `y` / `x`: the targets are held for a paste that will copy them — or move them, for a cut.
-	/// The paths also go to the system clipboard (P35④): another program can paste them as text
-	/// at once — the `text/uri-list` exchange file managers read is the next phase.
 	fn yank(&mut self, cut: bool, ctx: &Context) {
 		let targets = self.targets();
 		if targets.is_empty() {
@@ -2790,9 +2259,6 @@ impl App {
 		let count = targets.len();
 		let text = targets.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join("\n");
 
-		// the file managers' exchange first (P35④ phase two): when it takes the selection it
-		// carries the text mimes itself; when it cannot — no compositor, no Wayland — the text
-		// road is the one that runs. Exactly one of the two ever takes the selection.
 		if !(self.uri_offers && crate::uri_clipboard::offer(&targets, cut)) {
 			ctx.copy_text(text);
 		}
@@ -2804,7 +2270,6 @@ impl App {
 		);
 	}
 
-	/// `Y` / `X`: the held targets and the selection are let go.
 	fn unyank(&mut self) {
 		let held = self.yank.take().is_some();
 		let selected = !self.selection.is_empty();
@@ -2834,8 +2299,6 @@ impl App {
 		self.trash_job = Some(TrashJob::Delete(trash::delete(paths.clone()), paths));
 	}
 
-	/// The bin's answers, read every frame: a delete lands as a toast with its undo, a listing
-	/// fills the view, and the rest say how they went.
 	fn trash_poll(&mut self, ctx: &Context) {
 		let Some(job) = self.trash_job.take() else { return };
 		let mut keep = None;
@@ -2848,7 +2311,6 @@ impl App {
 					for path in &paths {
 						self.selection.remove(path);
 					}
-					// the toast and the undo stack hold one action (P33⑫): the originals go back
 					self.note(format!("已删除 {} 项 → 回收站", paths.len()), Undo::Trash(paths));
 					done = true;
 				}
@@ -2872,7 +2334,6 @@ impl App {
 				None => keep = Some(TrashJob::List(job)),
 				Some(Ok(items)) => {
 					metrics::bin(items.len());
-					// the bin is one list for every tab that shows it: whoever is waiting gets it
 					for tab in &mut self.tabs {
 						if let Some(view) = &mut tab.trash
 							&& view.loading
@@ -2883,16 +2344,11 @@ impl App {
 							view.cursor = view.cursor.min(view.items.len().saturating_sub(1));
 						}
 					}
-					// the view is up: what the preview column shows is the bin's own item. No
-					// refresh is asked for here — the list *is* the refresh, and asking again
-					// would list the bin in a loop (P19)
 					if self.in_bin() {
 						self.look_at_trash();
 					}
 				}
 				Some(Err(e)) => {
-					// a list that failed says so and leaves the views standing empty: asking again
-					// would be a toast every frame, and the view would read forever (P19)
 					for tab in &mut self.tabs {
 						if let Some(view) = &mut tab.trash {
 							view.loading = false;
@@ -2930,10 +2386,6 @@ impl App {
 		self.trash_job = keep;
 
 		if done {
-			// whatever happened, the directory behind the window may have changed — and the bin's
-			// own list is stale by definition. The refresh asks for the new one *after* the
-			// finished job is dropped: a refresh overwritten by the old job's `keep` left the
-			// view reading for ever (P19)
 			self.cache.forget(self.tab().path());
 			self.trash_refresh();
 		}
@@ -2943,12 +2395,7 @@ impl App {
 		}
 	}
 
-	/// `g t`: the bin opens as a tab of its own (P27) — no modal, no swallowed keys: the keymap
-	/// keeps its say inside it, the chip says 回收站, and closing it is walking away or the chip's
-	/// ×. The tab stands on the directory the person left behind, so leaving the bin is a `leave`
-	/// or a `cd` away.
 	fn trash_view_open(&mut self) {
-		// the same ceiling every new tab wears
 		if self.tabs.len() >= TAB_LIMIT {
 			self.toasts.push(format!("最多 {TAB_LIMIT} 个标签页"), toast::Kind::Warn);
 			return;
@@ -2966,8 +2413,6 @@ impl App {
 		self.preview.clear();
 	}
 
-	/// The preview column while the bin is the view: the standing item's own bytes, wherever the
-	/// bin keeps them — a first-class view previews like any other (P19).
 	fn look_at_trash(&mut self) {
 		let Some(item) = self.bin().and_then(|view| view.items.get(view.cursor)).cloned() else {
 			self.preview.clear();
@@ -2980,9 +2425,6 @@ impl App {
 		}
 	}
 
-	/// A fresh list for a view that is up — after a restore, a purge or an emptying, what the
-	/// views show is stale by definition. The bin is one global list, so every bin tab is marked
-	/// waiting and one read answers them all (P27).
 	fn trash_refresh(&mut self) {
 		let mut wanted = false;
 		for tab in &mut self.tabs {
@@ -3001,8 +2443,6 @@ impl App {
 			return;
 		};
 
-		// the way back must never be a silent overwrite: a name the original directory still
-		// holds gets a question, and the answer puts the item beside it (P19)
 		let original = item.original_path();
 		if trash::taken(&original) {
 			let free = trash::free_beside(&original);
@@ -3044,9 +2484,6 @@ impl App {
 		});
 	}
 
-	/// The link panel's own keys (P21): the three choices are its rows, `)`/`(`/`*` choose them by
-	/// key, Enter takes the standing one, Escape puts the panel away — and the choice opens the
-	/// path box the table asks for.
 	fn link_pick_keys(&mut self, events: &[egui::Event], _typed: &str, ctx: &Context) {
 		let (mut close, mut take, mut moved) = (false, false, 0isize);
 
@@ -3077,8 +2514,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The choice's own step (P21): the path box opens on the cursor's own path, to be edited into
-	/// whatever the link is to point at.
 	fn link_choose(&mut self) {
 		let Some(at) = self.link_pick.take() else { return };
 		let kind = [ LinkKind::Absolute, LinkKind::Relative, LinkKind::Hard ][at.min(2)];
@@ -3095,8 +2530,6 @@ impl App {
 		});
 	}
 
-	/// The find box's keyboard (P21): typing is the pattern (the list colours as it goes), Enter
-	/// keeps it for `n`/`N`, and Esc clears both.
 	fn find_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let mut close = false;
 		let mut keep = None;
@@ -3134,7 +2567,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The find box's strip (P21): the same line the filter uses, with the search's own words.
 	fn draw_find(&mut self, ui: &mut Ui, area: Rect, advance: f32, font: &FontId, small: &FontId) {
 		let Some(edit) = &self.find else { return };
 
@@ -3152,8 +2584,6 @@ impl App {
 		let x = rect.min.x + 12.0 + pw;
 		painter.text(pos2(x, rect.center().y), Align2::LEFT_CENTER, shown, font.clone(), tokens.text);
 
-		// the caret, one cell of a hint after the text — and the anchor the IME reads (P33⑤), which
-		// must not blink with it
 		let caret = x + cells(shown, advance);
 		let caret_rect = Rect::from_min_size(pos2(caret, rect.center().y - 8.0), vec2(2.0, 16.0));
 		if ui.ctx().input(|i| i.time).fract() < 0.5 {
@@ -3170,9 +2600,6 @@ impl App {
 		);
 	}
 
-	/// The help panel's keyboard (P21's `?`): `j`/`k` and the arrows walk the list, the wheel it,
-	/// `f` (or a click) puts the keyboard in the box where what is typed filters the rows, and Enter
-	/// runs the standing row — once the box has been left. Escape leaves the box first, then closes.
 	fn help_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let rows = self.keys.rows();
 		let (mut close, mut run, mut focus, mut moved) = (false, false, false, 0isize);
@@ -3181,8 +2608,6 @@ impl App {
 			let egui::Event::Key { key, pressed: true, modifiers, .. } = event else { continue };
 
 			match key {
-				// Escape steps out of the box first and closes only from the list — the machine the
-				// index panel shares (P33⑬)
 				Key::Escape => {
 					if !self.help_focus.escape() {
 						close = true;
@@ -3230,7 +2655,6 @@ impl App {
 				self.help_at = (self.help_at as isize + moved).clamp(0, len as isize - 1) as usize;
 			}
 		} else {
-			// typing narrows the list: the standing row may have walked past its end
 			let visible = help_rows(rows, &self.help_query.text);
 			self.help_at = self.help_at.min(visible.len().saturating_sub(1));
 		}
@@ -3238,9 +2662,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The bin's own list is walked by the list's own keys (P27): the middle column's rows are the
-	/// bin's, so `act` sends the motion keys here while the tab is the bin's own view. The seat is
-	/// the one place the bin's cursor moves — clamp, follow, preview, and the number replay reads.
 	fn bin_seat(&mut self, cursor: usize) {
 		let Some(view) = self.bin_mut() else { return };
 		let len = view.items.len();
@@ -3252,7 +2673,6 @@ impl App {
 		let cursor = view.cursor;
 		view.scroll.follow(cursor);
 		metrics::cursor(cursor, len);
-		// the preview follows the standing item, the way it follows the cursor anywhere else
 		self.look_at_trash();
 		self.bars_moved[0] = Some(Instant::now());
 	}
@@ -3262,7 +2682,6 @@ impl App {
 		self.bin_seat((at as isize + step).max(0) as usize);
 	}
 
-	/// `<C-u>`/`<C-d>`/…: the same page arithmetic the list's own uses, over the bin's rows.
 	fn bin_page(&mut self, full: bool, back: bool) {
 		let Some(view) = self.bin() else { return };
 		let rows = view.scroll.rows.max(1);
@@ -3273,10 +2692,6 @@ impl App {
 		self.bin_seat(next.max(0) as usize);
 	}
 
-	// ---- compressing (§ the keymap's c z) ----
-
-	/// `c z`: the archive's name is asked for, pre-filled the way every archiver does it — the
-	/// directory's own name with a zip's extension.
 	fn compress_open(&mut self) {
 		let paths = self.targets();
 		if paths.is_empty() {
@@ -3291,8 +2706,6 @@ impl App {
 		});
 	}
 
-	/// Enter in the prompt: an archive that is not already there is what it takes — overwriting one
-	/// is not a thing a single-line prompt should be able to do by accident.
 	fn prompt_submit(&mut self) {
 		let Some(prompt) = self.prompt.take() else { return };
 
@@ -3322,7 +2735,6 @@ impl App {
 		}
 	}
 
-	/// The prompt's keyboard: Esc puts it away, Enter answers it, everything else edits.
 	fn prompt_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let (mut close, mut submit) = (false, false);
 
@@ -3353,8 +2765,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The pack's answers, read every frame: when it lands, a toast says how many files went in —
-	/// and the progress group has been saying how far it was all along.
 	fn pack_poll(&mut self, ctx: &Context) {
 		let Some(job) = &self.pack else { return };
 		match job.poll() {
@@ -3372,25 +2782,17 @@ impl App {
 		}
 	}
 
-	// ---- the fuzzy panel (§5.3) ----
-
-	/// The index panel's standing row, if it is an entry one of the zones owns: what `Del` acts on.
 	fn index_entry(&self) -> Option<IndexEntry> {
 		let fuzzy = self.fuzzy.as_ref().filter(|fuzzy| fuzzy.mode == FuzzyMode::Index)?;
 		let item = fuzzy.hits.get(fuzzy.at).and_then(|hit| fuzzy.items.get(hit.at))?;
 
 		match &item.payload {
 			FuzzyPayload::Index(name) => Some(IndexEntry::Bookmark(name.clone())),
-			// the index mode's only other payload is the frecency path of the 高频/最近 zones
 			FuzzyPayload::Path(path) => Some(IndexEntry::Frecency(path.clone(), item.zone)),
 			_ => None,
 		}
 	}
 
-	/// `Del` in the index panel (P24; P40 for the other two zones): the standing entry goes — a
-	/// bookmark from its store, or a 高频/最近 row from the frecency's — and the toast offers it
-	/// back. A bookmark's path that is not there can only be deleted this way; a frecency row
-	/// carries its score and clock into the undo, so a restore ranks where it ranked.
 	fn index_delete(&mut self) {
 		match self.index_entry() {
 			Some(IndexEntry::Bookmark(name)) => {
@@ -3415,10 +2817,6 @@ impl App {
 		self.fuzzy_rebuild();
 	}
 
-	/// `Ctrl+S` in the index panel: the directory the window stands in becomes an index — the only
-	/// way to add one (P24). A path already typed in the box outranks it, a file included: what the
-	/// person typed is what the person means, not its parent. A toast says what was added, and
-	/// offers the undo; a path that is not there is refused the same way Enter refuses it.
 	fn index_save(&mut self) {
 		let (typed, cwd) = {
 			let cwd = self.tab().path().to_owned();
@@ -3449,9 +2847,6 @@ impl App {
 		self.fuzzy_rebuild();
 	}
 
-	/// `z` / `Z` / `] f`: the index panel — bookmarks first, then the high scores, then the recent
-	/// visits, all of it one fuzzy line (P14's native replacement for whoosh's own panels; the
-	/// `[`/`]` family stays bound as an alias, so the muscle memory keeps working).
 	fn fuzzy_index(&mut self) {
 		let now = now_secs();
 		let items: Vec<FuzzyItem> = index_rows(
@@ -3466,9 +2861,6 @@ impl App {
 		self.fuzzy_open(FuzzyMode::Index, items);
 	}
 
-	/// The device family (P17): a worker reads the bus, and the answer decides what happens next —
-	/// the picker panel for `M m` / `M u`, a remount or a jump for `M R` / `G m`, and the old cwd
-	/// for `` `` ``.
 	fn devices(&mut self, do_: DeviceDo) {
 		match do_ {
 			DeviceDo::PrevCwd => {
@@ -3486,8 +2878,6 @@ impl App {
 				let cwd = self.tab().path().to_owned();
 				std::thread::spawn(move || {
 					let answer = match do_ {
-						// the listing serves the picker, and the remount/jump need it to find
-						// the device the cwd stands on
 						DeviceDo::MountPick | DeviceDo::UnmountPick { .. } => Answer::Devices(mount::list()),
 						DeviceDo::Remount => Answer::At(remount(&cwd)),
 						DeviceDo::Jump => Answer::At(jump_to(&cwd)),
@@ -3501,7 +2891,6 @@ impl App {
 		}
 	}
 
-	/// Whatever the worker left: the picker opens, a jump goes, a toast says how it went.
 	fn device_poll(&mut self, ctx: &Context) {
 		let Some(job) = &self.device_job else { return };
 		let devices = match job.rx.try_recv() {
@@ -3544,8 +2933,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The picker panel: one row a device, its badge on the right, Enter doing what the intent
-	/// asked for.
 	fn device_panel(&mut self, devices: Vec<mount::Device>, unmount: bool, force: bool) {
 		let items: Vec<FuzzyItem> = devices
 			.iter()
@@ -3564,7 +2951,6 @@ impl App {
 		self.fuzzy_open(FuzzyMode::Devices { unmount, force }, items);
 	}
 
-	/// The index panel's own rows, again — after a delete or a save changed them.
 	fn index_items(&self) -> Vec<FuzzyItem> {
 		let now = now_secs();
 
@@ -3596,15 +2982,11 @@ impl App {
 		self.fuzzy_refilter();
 	}
 
-	/// `s` / `S`: the panel opens on an empty query and waits for one — walking a whole tree off a
-	/// blank line is nobody's idea of a search. The debounce below is what starts the walk.
 	fn fuzzy_search(&mut self, content: bool) {
 		let mode = if content { FuzzyMode::FindText } else { FuzzyMode::FindNames };
 		self.fuzzy_open(mode, Vec::new());
 	}
 
-	/// The panel goes away: a walk still running is told to stop with it — the spec's `<C-s>`
-	/// cancel, reached by Esc as well.
 	fn fuzzy_close(&mut self) {
 		if let Some(fuzzy) = self.fuzzy.take()
 			&& let Some(job) = fuzzy.finder
@@ -3613,8 +2995,6 @@ impl App {
 		}
 	}
 
-	/// The query moved: a walk in flight is stopped and its rows are let go — the old query's
-	/// results must not stand under the new one. The next walk waits its 150ms in `fuzzy_tick`.
 	fn fuzzy_requery(&mut self) {
 		let Some(find) = self
 			.fuzzy
@@ -3640,13 +3020,9 @@ impl App {
 		fuzzy.since = Instant::now();
 	}
 
-	/// The finder's own clock, asked every frame: what a walk has sent is merged in as it lands,
-	/// a query that has settled starts its walk, and a large list's filter is taken while its
-	/// epoch still stands.
 	fn fuzzy_tick(&mut self, ctx: &Context) {
 		self.fuzzy_poll();
 
-		// 1. what the walk has sent
 		let mut merged = false;
 		if let Some(fuzzy) = &mut self.fuzzy
 			&& let Some(job) = fuzzy.finder.take()
@@ -3680,7 +3056,6 @@ impl App {
 			self.fuzzy_refilter();
 		}
 
-		// 2. a query that has settled starts its walk
 		let root = self.tab().path().to_owned();
 		let Some(mode) = self.fuzzy.as_ref().map(|fuzzy| fuzzy.mode) else { return };
 		let Some(fuzzy) = &mut self.fuzzy else { return };
@@ -3705,8 +3080,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The query moved: the hits are recomputed — on this thread up to the spec's two thousand,
-	/// and on a thread of their own beyond that, so a large list never holds the frame.
 	fn fuzzy_refilter(&mut self) {
 		let Some(fuzzy) = &mut self.fuzzy else { return };
 
@@ -3730,7 +3103,6 @@ impl App {
 		fuzzy.job = Some(FilterJob { epoch, rx });
 	}
 
-	/// A filter that came back is taken only while its generation is the current one.
 	fn fuzzy_poll(&mut self) {
 		let Some(fuzzy) = &mut self.fuzzy else { return };
 		let Some(job) = fuzzy.job.take() else { return };
@@ -3746,7 +3118,6 @@ impl App {
 		}
 	}
 
-	/// The store moved under a panel that is up: the list is rebuilt, and the query stays.
 	fn fuzzy_rebuild(&mut self) {
 		let Some(mode) = self.fuzzy.as_ref().map(|fuzzy| fuzzy.mode) else { return };
 		let items = match mode {
@@ -3770,9 +3141,7 @@ impl App {
 		fuzzy.at = (fuzzy.at as isize + step).rem_euclid(len as isize) as usize;
 	}
 
-	/// Enter: jump, remove or rename — the panel's own question for the standing row.
 	fn fuzzy_enter(&mut self) {
-		// ①/② first (P22): what was typed may be a path of its own, and a path outranks the row
 		if self.fuzzy.as_ref().is_some_and(|fuzzy| fuzzy.mode == FuzzyMode::Index) {
 			let (typed, cwd) = {
 				let fuzzy = self.fuzzy.as_ref().expect("just checked");
@@ -3821,11 +3190,6 @@ impl App {
 		}
 	}
 
-	// ---- input ----
-
-	/// The `which` hint's own clock (P18): a chord's family nobody carries on goes away, and the
-	/// sequence with it — the next key is then its own again, the way yazi's key-sequence timeout
-	/// has always read. A key inside the chord restarts the clock.
 	fn which_expire(&mut self, ctx: &Context) {
 		let Some(at) = self.which_at else { return };
 		if self.sequence.is_none() {
@@ -3844,7 +3208,6 @@ impl App {
 	}
 
 	fn keys(&mut self, ctx: &Context) {
-		// the rename field has the keyboard: only Esc is ours, to put the title back
 		if self.rename.is_some() {
 			let escaped =
 				ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { key: Key::Escape, pressed: true, .. })));
@@ -3858,23 +3221,12 @@ impl App {
 		}
 
 		let events = ctx.input(|i| i.events.clone());
-		// what the layout typed arrives as its own events: one character per press, and nothing
-		// here when a modifier is held
 		let typed = typed_text(&events);
 
 		self.handle(ctx, &events, &typed);
 	}
 
-	/// One batch of input events, whoever sent them: the window's own keyboard or a replay's
-	/// synthesized steps. The text modes own the keyboard in their own order — the bulk editor,
-	/// then the in-place rename — and only what none of them takes goes to the keymap.
 	fn handle(&mut self, ctx: &Context, events: &[egui::Event], typed: &str) {
-		// Ctrl+C / Ctrl+X / Ctrl+A inside a field: the field's own text is copied, cut, or the
-		// whole of it selected — one place, whatever holds the keyboard (P18, P21's global four).
-		// The real window's Ctrl+C / Ctrl+X never arrive as key events: egui-winit turns the
-		// clipboard chords into `Event::Copy` / `Event::Cut` before any key is made (P35②), so
-		// both spellings land in the same place. When no field holds the keyboard the list's own
-		// meanings stand — those are a few lines down, and they hear the two events the same way.
 		for event in events {
 			let (copy, cut, select) = match event {
 				egui::Event::Key { key, pressed: true, modifiers, .. } if modifiers.ctrl => match key {
@@ -3956,11 +3308,6 @@ impl App {
 			return;
 		}
 
-		// the real window's clipboard chords (P35②): egui-winit answers Ctrl+C / Ctrl+X / Ctrl+V
-		// with `Event::Copy` / `Event::Cut` / `Event::Paste` and never makes a key event of them —
-		// so the list hears the three verbs here, the same ones the Ctrl keys name (`y`, `x`, `p`
-		// under another spelling). The clipboard text a `Paste` may carry belongs to a field, and
-		// none holds the keyboard on this path.
 		for event in events {
 			match event {
 				egui::Event::Copy => self.act(Action::Yank { cut: false }, ctx),
@@ -3977,8 +3324,6 @@ impl App {
 				self.help = false;
 				self.sequence = None;
 				self.which_at = None;
-				// and a toast is whatever else Esc has left to take away (P30): the note it raises,
-				// among them, goes on the same key — and a selection goes with them (P33⑩: Esc 清)
 				self.toasts.clear();
 				self.selection.clear();
 				continue;
@@ -3990,8 +3335,6 @@ impl App {
 				continue;
 			}
 
-			// `C` while the bin's tab is up: empty it after one question (P27). The keymap has no
-			// binding for the bare key — the bin is the only place it means anything.
 			if *key == Key::C && !modifiers.ctrl && !modifiers.alt && self.in_bin() {
 				self.trash_empty_ask();
 				ctx.request_repaint();
@@ -4002,10 +3345,6 @@ impl App {
 			let Some(chord) = crate::keys::chord(*key, *modifiers, text) else { continue };
 			metrics::input("key");
 
-			// the global four on the list (P21): no field took the keyboard, so Ctrl+A is every
-			// row selected and Ctrl+C / Ctrl+X / Ctrl+V are the clipboard's own verbs — `y`, `x`
-			// and `p` under another spelling. A field's own meanings were handled above. `Ctrl+Z`
-			// joins them as `u`'s twin (P33⑫).
 			if modifiers.ctrl
 				&& let Some(action) = match *key {
 					Key::A => Some(Action::ToggleAll(Some(true))),
@@ -4026,8 +3365,6 @@ impl App {
 					self.act(action, ctx);
 				}
 			} else if let Some(open) = &self.sequence {
-				// a family is open: the hint goes up, and a key inside a longer chord resets its
-				// clock rather than letting it run out under the person's hand
 				metrics::which(&chord, self.keys.family(open).len());
 				self.which_at = Some(Instant::now());
 				ctx.request_repaint_after(WHICH_TIMEOUT);
@@ -4035,14 +3372,10 @@ impl App {
 		}
 	}
 
-	/// The spot card's keyboard (the `[spot]` keymap): the card stays up while the cursor walks the
-	/// list beneath it, `Tab`/`Esc` put it away, and `c c` copies the file's path.
 	fn spot_keys(&mut self, events: &[egui::Event], ctx: &Context) {
 		let len = self.tab().view.len();
 
 		for event in events {
-			// the card's own `Ctrl+C` puts it away — and the real window spells that as
-			// `Event::Copy`, never as a key (P35②)
 			if matches!(event, egui::Event::Copy) {
 				self.spot = false;
 				self.spot_chord = false;
@@ -4087,8 +3420,6 @@ impl App {
 		}
 	}
 
-	/// The filter field's keyboard: printing keys are the pattern (which filters as it is typed),
-	/// Enter keeps it, Esc and `f` clear it.
 	fn filter_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let mut closed = false;
 		let mut kept = None;
@@ -4134,8 +3465,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The bulk editor's keyboard: every printing key is text, Enter makes a line, Ctrl+Enter
-	/// submits and Esc throws the editor away.
 	fn bulk_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let (mut close, mut commit) = (false, false);
 		let mut touched = !typed.is_empty();
@@ -4176,8 +3505,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The in-place rename's keyboard: Esc puts the name back, Enter commits when the name is
-	/// legal, and everything else edits the field.
 	fn rename_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let (mut close, mut commit) = (false, false);
 		let mut touched = !typed.is_empty();
@@ -4211,9 +3538,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The command line's keyboard: Enter runs, Esc puts it away, Tab completes the last token,
-	/// the arrows walk the completion — or the history when none is up — and everything else
-	/// edits the line.
 	fn cmdline_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let (mut close, mut run) = (false, false);
 		let mut touched = !typed.is_empty();
@@ -4258,8 +3582,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// open-with's keyboard: Enter hands the files over, Esc puts the field away, Tab completes,
-	/// the arrows recall or walk, and everything else edits the command.
 	fn openwith_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let (mut close, mut submit) = (false, false);
 
@@ -4298,24 +3620,16 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The fuzzy panel's keyboard: Esc leaves, Enter asks the mode's question, the arrows walk
-	/// the hits (Ctrl+p/n too, the fzf habit), and everything else is query text. Only a query
-	/// that really changed restarts a walk — an arrow must not throw one away.
 	fn fuzzy_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let (mut close, mut enter) = (false, false);
 		let mut moved = 0isize;
 		let mut touched = false;
-		// which half held the keyboard when the call arrived (P33⑬): `f`'s own letter arrives in
-		// the same call that steps into the box, and a keypress meant for the list must not type
-		// just because the same call is the one that moved the keyboard
 		let was_inside = self.fuzzy.as_ref().is_some_and(|fuzzy| fuzzy.focus.inside);
 
 		for event in events {
 			let egui::Event::Key { key, pressed: true, modifiers, .. } = event else { continue };
 
 			let index = self.fuzzy.as_ref().is_some_and(|fuzzy| fuzzy.mode == FuzzyMode::Index);
-			// which half of the panel holds the keyboard (P33⑬): the list it is, unless `f` — or a
-			// click on the box — has put it inside
 			let inside = self.fuzzy.as_ref().is_some_and(|fuzzy| fuzzy.focus.inside);
 
 			if index
@@ -4328,7 +3642,6 @@ impl App {
 				continue;
 			}
 
-			// `M`'s panel: the table's nine options are its own keys, not query letters (P21)
 			if matches!(self.fuzzy.as_ref().map(|fuzzy| fuzzy.mode), Some(FuzzyMode::Devices { .. }))
 				&& let Some(door) = device_door(*key, modifiers.shift)
 			{
@@ -4336,9 +3649,6 @@ impl App {
 				continue;
 			}
 
-			// `i` again steps into the box, the user's own final ruling (P33⑬): the same key
-			// twice — open the panel, press it once more, and the path box has the keyboard. `f`
-			// stays the help panel's door, and the chord itself stays one key. Only from the list.
 			if *key == Key::I && index && !inside && !modifiers.ctrl && !modifiers.alt {
 				if let Some(fuzzy) = &mut self.fuzzy {
 					fuzzy.focus.enter();
@@ -4347,8 +3657,6 @@ impl App {
 			}
 
 			match (*key, modifiers.ctrl) {
-				// Escape steps out of the box first and closes the panel only from the list — and
-				// only the index panel keeps a list to step back to (P33⑬)
 				(Key::Escape, _) => {
 					let stepped_out = index && self.fuzzy.as_mut().is_some_and(|fuzzy| fuzzy.focus.escape());
 					if !stepped_out {
@@ -4362,8 +3670,6 @@ impl App {
 				(Key::ArrowUp, _) | (Key::P, true) | (Key::K, true) => moved -= 1,
 				(Key::ArrowDown, _) | (Key::N, true) | (Key::J, true) => moved += 1,
 				_ => {
-					// a letter on the list is navigation's nobody: it does not type (P33⑬) — the
-					// box takes the keyboard before it takes keys
 					if inside
 						&& let Some(fuzzy) = &mut self.fuzzy
 					{
@@ -4377,8 +3683,6 @@ impl App {
 			&& was_inside
 			&& let Some(fuzzy) = &mut self.fuzzy
 		{
-			// nothing is filtered out of what was typed (P24): `a` and `A` are search words again,
-			// now that they are no longer the panel's own commands
 			fuzzy.query.type_text(typed);
 		}
 
@@ -4397,7 +3701,6 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// `L`'s panel (P21): three rows, the standing one marked, and the keys under it.
 	fn draw_link_pick(&mut self, ui: &mut Ui, area: Rect, small: &FontId) {
 		let Some(at) = self.link_pick else { return };
 
@@ -4424,7 +3727,6 @@ impl App {
 			painter.text(pos2(row.min.x + 12.0, row.center().y), Align2::LEFT_CENTER, *key, font.clone(), tokens.green);
 			painter.text(pos2(row.min.x + 44.0, row.center().y), Align2::LEFT_CENTER, *what, font.clone(), tokens.text);
 
-			// a click seats the choice, a double-click takes it (the same two-step the panels use)
 			let response = ui.interact(row, egui::Id::unique(("link-choice", i)), Sense::click());
 			if response.double_clicked() {
 				seat = Some(i);
@@ -4452,8 +3754,6 @@ impl App {
 		);
 	}
 
-	/// The confirmation's keyboard (§4.5): `y` answers yes, `n`, Enter and Esc answer no — the
-	/// focus sits on the cancel side, and the keyboard's own answers are quicker than a Tab.
 	fn confirm_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
 		let mut yes = false;
 		let mut no = false;
@@ -4468,7 +3768,6 @@ impl App {
 			}
 		}
 
-		// the layout's own text: a `y` typed straight is still a yes
 		if typed.starts_with('y') {
 			yes = true;
 		}
@@ -4485,9 +3784,6 @@ impl App {
 	}
 
 	fn wheel(&mut self, ctx: &Context, area: Rect, pointer: Option<egui::Pos2>) {
-		// Two readings of one event: `content` is egui's own (how the *content* should move), which
-		// the panels already speak; `rows` is the list's own (toward the tail), from the single
-		// conversion in `scroll::wheel_rows`, which is what the list and the preview consume.
 		let (mut content, mut rows) = (0.0f32, 0.0f32);
 
 		for event in ctx.input(|i| i.events.clone()) {
@@ -4507,8 +3803,6 @@ impl App {
 		self.wheel_route(ctx, area, pointer, content, rows);
 	}
 
-	/// Where a wheel's two readings land, decided by `wheel_owner` alone: one function, so the event
-/// path and the replay cannot drift apart (P18), and the owner can be read at a glance (P38③).
 	fn wheel_route(&mut self, ctx: &Context, area: Rect, pointer: Option<egui::Pos2>, content: f32, rows: f32) {
 		match self.wheel_owner(area, pointer) {
 			WheelOwner::Menu => {
@@ -4518,7 +3812,6 @@ impl App {
 				}
 			}
 			WheelOwner::Tabs => {
-				// the tab bar's own horizontal scroll, when the chips outgrow it
 				let overflow = self.tabs_overflow(area.width());
 				self.tabs_scroll = (self.tabs_scroll - content * 24.0).clamp(0.0, overflow);
 			}
@@ -4528,16 +3821,12 @@ impl App {
 				}
 			}
 			WheelOwner::Parent => {
-				// the left column's own scroll (P33⑧): the pointer over it walks it, whatever the
-				// keyboard's column is doing — the middle list hears nothing of this wheel
 				self.tab_mut().parent.scroll.wheel(rows);
 				if self.shot.is_some() {
 					self.shot_wait = Some(4);
 				}
 			}
 			WheelOwner::Preview => {
-				// `Ctrl+滚轮` is §3.1's zoom gesture — a wheel back is a zoom in; a plain wheel
-				// scrolls the column's own content, rows toward the tail
 				let ctrl = ctx.input(|i| i.modifiers.ctrl);
 				if ctrl {
 					self.preview.zoom_by(rows < 0.0);
@@ -4546,7 +3835,6 @@ impl App {
 				}
 			}
 			WheelOwner::Help => {
-				// the wheel browses the help's list the way `j`/`k` do (P21): the standing row walks
 				let step = -content.round() as isize;
 				let visible = help_rows(self.keys.rows(), &self.help_query.text);
 				if !visible.is_empty() {
@@ -4554,7 +3842,6 @@ impl App {
 				}
 			}
 			WheelOwner::List => {
-				// the bin, while it is the view, has its own place in its own list (P19/P27)
 				if self.in_bin() {
 					self.bin_mut().expect("in the bin's tab").scroll.wheel(rows);
 				} else {
@@ -4570,12 +3857,7 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// The one owner of a wheel (P38③): the priority the user wrote down — a standing panel, then
-	/// the preview under the pointer, then the list — with the window's other regions deciding
-	/// between them exactly as they always did (the tab bar, the output panel, the parent column,
-	/// the help list).
 	fn wheel_owner(&self, area: Rect, pointer: Option<egui::Pos2>) -> WheelOwner {
-		// a standing panel owns the wheel whatever the pointer is over (P36②)
 		if self.menu.is_some() {
 			return WheelOwner::Menu;
 		}
@@ -4602,7 +3884,6 @@ impl App {
 		WheelOwner::List
 	}
 
-	/// How far the chips outgrow the bar, in pixels: the clamp for the bar's own scroll.
 	fn tabs_overflow(&self, width: f32) -> f32 {
 		let advance = FONT_SIZE * 0.62;
 		let chips: f32 = self
@@ -4614,12 +3895,9 @@ impl App {
 		(chips + 16.0 - (width - 44.0)).max(0.0)
 	}
 
-	// ---- the replay: steps a burst of input can be driven with, for the acceptance ----
-
 	fn replay(&mut self, ctx: &Context, area: Rect) {
 		let waited = self.seed_at.elapsed();
 		if self.seed_next < self.seed.len() && waited < Duration::from_millis(350) {
-			// the window paints on demand: a step that is waiting for its moment has to ask back
 			ctx.request_repaint_after(Duration::from_millis(350) - waited);
 			return;
 		}
@@ -4645,18 +3923,13 @@ impl App {
 				}
 			}
 		} else if let Some(text) = step.strip_prefix("paste ") {
-			// a real Ctrl+V: egui's own paste event, through the same handler a keyboard uses
 			self.handle(ctx, &[ egui::Event::Paste(text.to_owned()) ], text);
 		} else if let Some(text) = step.strip_prefix("ime ") {
-			// a Chinese input method's commit
 			self.handle(ctx, &[ egui::Event::Ime(egui::ImeEvent::Commit(text.to_owned())) ], text);
 		} else if let Some(text) = step.strip_prefix("type ") {
-			// a paste-like delivery of text: the same events a layout sends, `\n` and all
 			let text = text.replace("\\n", "\n");
 			self.handle(ctx, &[ egui::Event::Text(text.clone()) ], &text);
 		} else if let Some(i) = step.strip_prefix("click ") {
-			// a single click on the i-th *visible* row, through the same mapping the mouse path
-			// uses — and a click past the rows (a blank one) goes through it too, deciding nothing
 			let i: usize = i.trim().parse().unwrap_or(0);
 			let first = self.tab().scroll.offset.floor() as usize;
 			let len = self.tab().view.len();
@@ -4665,9 +3938,6 @@ impl App {
 			}
 			ctx.request_repaint();
 		} else if let Some(rows) = step.strip_prefix("scroll ") {
-			// script-level rows: positive is deeper into the list — the same view the wheel's
-			// routing picks (P33③: the bin's list steps on its own, and a script has to drive
-			// whichever list is actually on screen)
 			let rows = rows.trim().parse().unwrap_or(3.0);
 			if self.in_bin() {
 				self.bin_mut().expect("in the bin's tab").scroll.wheel(rows);
@@ -4677,8 +3947,6 @@ impl App {
 			self.bars_moved[0] = Some(Instant::now());
 			self.shot_wait = Some(4);
 		} else if let Some(what) = step.strip_prefix("zoom ") {
-			// the zoom gestures without a pointer: `zoom in|out` are the Ctrl+wheel steps, and
-			// `fit` / `full` are what the spec's own keys would call
 			match what.trim() {
 				"in" => {
 					self.preview.zoom_by(true);
@@ -4696,24 +3964,17 @@ impl App {
 			}
 			self.shot_wait = Some(4);
 		} else if let Some(delta) = step.strip_prefix("wheel ") {
-			// a real wheel event's own arithmetic: the `delta.y` egui would deliver (positive =
-			// the content moves down), through the very routing the event loop uses — with a
-			// `hover` step's pointer standing over the preview column, that column is what scrolls
 			let delta = delta.trim().parse().unwrap_or(0.0);
 			let rows = scroll::wheel_rows(egui::MouseWheelUnit::Line, delta);
 			self.wheel_route(ctx, area, self.replay_at, delta, rows);
 			self.shot_wait = Some(4);
 		} else if let Some(rest) = step.strip_prefix("hover ") {
-			// where the replay's pointer stands, without a pointer: `hover <x> <y>` in the
-			// window's own points, and `hover` alone takes it away again
 			let numbers: Vec<f32> = rest.split_whitespace().filter_map(|n| n.parse().ok()).collect();
 			self.replay_at = match numbers[..] {
 				[ x, y ] => Some(pos2(x, y)),
 				_ => None,
 			};
 		} else if let Some(rest) = step.strip_prefix("menu ") {
-			// the right click's own dispatch (P31), without a mouse: `menu <可见行号>` opens the
-			// row's menu, and a number past the rows opens the blank's own directory
 			let at: usize = rest.trim().parse().unwrap_or(0);
 			let first = self.tab().scroll.offset.floor() as usize;
 			let len = self.tab().view.len();
@@ -4726,11 +3987,8 @@ impl App {
 		} else if let Some(path) = step.strip_prefix("reveal ") {
 			self.reveal(PathBuf::from(path.trim()));
 		} else if step == "shot" {
-			// a shot where the replay stands: the only way to catch a loading state
 			self.shot_wait = Some(1);
 		} else if let Some(rest) = step.strip_prefix("drag ") {
-			// a separator drag, without a pointer: the same arithmetic the response path runs,
-			// and the same write to the config file it ends with
 			let numbers: Vec<f32> = rest.split_whitespace().filter_map(|n| n.parse().ok()).collect();
 			if let [ left, right, px ] = numbers[..] {
 				let columns = chrome::columns(self.body, self.shares);
@@ -4746,13 +4004,10 @@ impl App {
 		ctx.request_repaint();
 	}
 
-	/// Put the cursor on a path, wherever it is: the directory stack is rebuilt around it.
 	fn reveal(&mut self, path: PathBuf) {
 		self.reveal = Some(path);
 	}
 
-	/// A reveal needs the directory's snapshot to find the file in. If it is still being read, the
-	/// request waits for it — a reveal that arrives before the list does is not an error.
 	fn try_reveal(&mut self, ctx: &Context) {
 		let Some(path) = self.reveal.clone() else { return };
 		let Some(dir) = path.parent() else {
@@ -4777,8 +4032,6 @@ impl App {
 		self.arrived();
 	}
 
-	// ---- the numbers ----
-
 	fn shots(&mut self, ctx: &Context) {
 		let Some(wait) = self.shot_wait else { return };
 		if wait > 0 {
@@ -4792,8 +4045,6 @@ impl App {
 		let path = format!("{prefix}-{index}.png");
 		*index += 1;
 
-		// a PNG rather than the old PPM (P25): the harness's own frames and a real window's come
-		// out of the same call, and one format keeps the evidence folders readable
 		ctx.request_screenshot(move |image| {
 			let [w, h] = image.size;
 			let rgba: Vec<u8> = image.pixels.iter().flat_map(|pixel| pixel.to_srgba_unmultiplied()).collect();
@@ -4807,8 +4058,6 @@ impl App {
 			}
 		});
 	}
-
-	// ---- the drawing ----
 
 	fn draw(&mut self, ui: &mut Ui, area: Rect, body: Rect) {
 		let painter = ui.painter().clone();
@@ -4854,8 +4103,6 @@ impl App {
 		self.draw_which(ui, area, &small);
 	}
 
-	/// The tab bar (§2.4): flat chips, the active one underlined with 2px of accent, a close that
-	/// only shows itself when the chip is active or hovered, and a ghost `+` at the end.
 	fn tab_bar(&mut self, ui: &mut Ui, area: Rect, font: &FontId, advance: f32) {
 		let tokens = self.tokens;
 		let rect = Rect::from_min_size(area.min, vec2(area.width(), TAB_HEIGHT));
@@ -4907,8 +4154,6 @@ impl App {
 			if self.rename_at == Some(index) {
 				field = Some((Rect::from_min_size(pos2(chip.min.x + 8.0, chip.min.y + 6.0), vec2(chip.width() - 42.0, chip.height() - 12.0)), index));
 			} else {
-				// the chip's own number (§2.4): the badge the number keys jump by, in the small
-				// secondary face — past nine it is simply the number it is
 				let number = format!("{}", index + 1);
 				let badge = number_width(index);
 				clipped.text(
@@ -4929,11 +4174,6 @@ impl App {
 				);
 			}
 
-			// the close (P33②): its box stands on every chip, and only its glyph shows for the active
-			// or hovered one, 20x20 of hit area. The box may not be gated on the same frame's hover:
-			// egui collapses the hover snapshot onto the very widget a click is delivered to, so a
-			// click arriving on an inactive chip's × found the branch skipped — the handler was
-			// gone in the one frame it was needed, and the × never answered anyone.
 			let hot = Rect::from_center_size(pos2(chip.max.x - 14.0, chip.min.y + chip.height() * 0.5), vec2(20.0, 20.0));
 			self.tab_close_hits.push((index, hot));
 			let closing = ui.interact(hot, egui::Id::unique(("tab-close", index)), Sense::click());
@@ -5001,9 +4241,6 @@ impl App {
 			});
 		}
 
-		// the ghost `+` (P33⑮): it stands just past the last chip now, the browser's own habit —
-		// three tabs and it sits at the third's right, one per press further right — clamped so it
-		// never slides under the corner's close. Same button, same token, a new place.
 		let plus = Rect::from_center_size(
 			pos2((at + 14.0).clamp(strip.min.x + 14.0, strip.max.x - 14.0), rect.center().y),
 			vec2(28.0, 28.0),
@@ -5018,9 +4255,6 @@ impl App {
 		}
 		self.plus_hit = Some(plus);
 
-		// and the corner's small close (P33⑯): the window's own × where the `+` used to live —
-		// niri draws no decorations, so the window carries one itself. A press is a press: the
-		// close goes out at once, no question asked, and the glyph reddens under the pointer.
 		let close = Rect::from_center_size(pos2(rect.max.x - 20.0, rect.center().y), vec2(28.0, 28.0));
 		let response = ui.interact(close, egui::Id::unique("window-close"), Sense::click());
 		if response.hovered() {
@@ -5038,7 +4272,6 @@ impl App {
 		}
 		self.close_hit = Some(close);
 
-		// the fade masks: the chips thin out at whichever end has more behind it
 		let overflow = self.tabs_overflow(area.width());
 		if self.tabs_scroll > 0.0 {
 			for (strip_rect, colour) in chrome::fade_strips(strip, true, tokens.base) {
@@ -5051,7 +4284,6 @@ impl App {
 			}
 		}
 
-		// the rename field takes the keyboard while it is there
 		if let Some((rect, _)) = field
 			&& let Some(buffer) = self.rename.as_mut()
 		{
@@ -5070,7 +4302,6 @@ impl App {
 			}
 		}
 
-		// the decisions, one by one, in the one place that can hold them
 		if let Some((from, to)) = actions.moved {
 			let tab = self.tabs.remove(from);
 			self.tabs.insert(to, tab);
@@ -5107,12 +4338,9 @@ impl App {
 		}
 	}
 
-	/// The three columns, their separators (draggable, double-click to reset, §2.2), the rows,
-	/// the skeleton and the overlay scrollbars.
 	fn draw_columns(&mut self, ui: &mut Ui, body: Rect, font: &FontId, advance: f32) {
 		let mut tokens = self.tokens;
 		if !ui.ctx().input(|i| i.focused) {
-			// the window has lost the focus: the selection says so (§1.2's inactive state)
 			tokens.sel_bg = tokens.sel_inactive;
 		}
 		let painter = ui.painter().clone();
@@ -5125,12 +4353,6 @@ impl App {
 			painter.rect_filled(preview, 0.0, tokens.crust);
 		}
 
-		// the parent column: the way back, as a short list above the current one — the stack's own
-		// step when there is one, and otherwise the cwd's filesystem parent, so a tab standing at
-		// its first directory still has a column that says where it is (§1.2's hierarchy).
-		// The pointer is as live here as on the middle column (P33⑧): the column carries a seat
-		// of its own (a click moves it) and a scroll of its own (the wheel walks it) — yazi's own
-		// two rights on the column beside it, held whatever the keyboard is doing.
 		if let Some(parent_rect) = columns.parent
 			&& let Some((path, derived)) = self.parent_view()
 		{
@@ -5138,7 +4360,6 @@ impl App {
 			let rows_visible = (parent_rect.height() / ROW_HEIGHT).floor().max(1.0) as usize;
 			let len = snapshot.entries.len();
 
-			// a different parent is a new column: its own reading stands, and the view shows it
 			let (cursor, offset) = {
 				let parent = &mut self.tab_mut().parent;
 				if parent.path.as_ref() != Some(&path) {
@@ -5179,10 +4400,6 @@ impl App {
 				None,
 			);
 
-			// the pointer's own way in (P33⑧/P35①): a click seats the column's cursor where it landed —
-			// and on a directory the click *enters* it, the middle column becoming that directory,
-			// the user's own ruling on yazi's parent click. The cwd's own row only seats (there is
-			// nowhere to go), and a file only seats (a single click never launches anything).
 			let mut seated = None;
 			for i in 0..rows_visible + 1 {
 				let Some(position) = clicked_row(first, i, len) else { break };
@@ -5208,17 +4425,12 @@ impl App {
 				if let Some((target, true)) = target
 					&& target != *self.tab().path()
 				{
-					// the `go` door itself (P35①): the same one `g a` and a followed link use
 					self.go(target);
 				}
 			}
 		}
 
-		// the current column: only the rows that show, moved by the fraction of a row that is left —
-		// or, while the bin is the view, the bin's own rows (P19)
 		if self.in_bin() {
-			// the bin is the view: the middle column shows what is in it, and the columns are the
-			// view rather than a popup over them (P19)
 			self.draw_trash_list(ui, columns.current, font, advance);
 		} else {
 			let snapshot = self.entries();
@@ -5234,8 +4446,6 @@ impl App {
 			} else {
 				columns.current
 			};
-			// how many rows fit is the scroll state's own, not only the painter's: `follow` is what
-			// keeps a click or a `j` from rewinding the list, and it can only do that knowing the view
 			self.tab_mut().scroll.rows = (list.height() / ROW_HEIGHT).floor().max(1.0) as usize;
 
 			Self::rows(
@@ -5258,13 +4468,7 @@ impl App {
 				self.find_pattern().as_deref(),
 			);
 
-			// the mouse's own way into the list: a click seats the cursor, a double-click opens the
-			// rename field (§4.3). While a rename is in flight, the rows stand back. Only the rows
-			// themselves are interactive — the blank below the last row is nobody's seat, and a click
-			// there must leave the cursor where the person left it.
 			if self.item_rename.is_none() {
-				// the blank under the rows is the window's own directory (P31's dispatch): its own
-				// interact stands first, so a row's menu wins wherever a row is
 				let blank = ui.interact(list, egui::Id::unique("list-blank"), Sense::click());
 				let (mut clicked, mut renamed, mut wanted) = (None, None, None);
 
@@ -5287,8 +4491,6 @@ impl App {
 					}
 				}
 
-				// the dispatch: a row inside the selection acts on the whole selection; anything
-				// else seats the cursor on the clicked row first — the left click's own contract
 				if let Some((position, at)) = wanted {
 					self.menu_on_row(position, at);
 				} else if blank.secondary_clicked() {
@@ -5308,7 +4510,6 @@ impl App {
 				painter.text(columns.current.center(), Align2::CENTER_CENTER, "（空目录）", font.clone(), tokens.subtext);
 			}
 
-			// the overlay scrollbar of the list, and the preview's own
 			if !snapshot.loading
 				&& len > rows_visible
 				&& let Some(requested) = self.overlay_bar(ui, columns.current, 0, len as f32, rows_visible as f32, offset)
@@ -5320,7 +4521,6 @@ impl App {
 		if let Some(preview) = columns.preview {
 			self.preview.draw(&painter, preview, &tokens);
 
-			// §3.1's gestures: a drag pans a zoomed picture, and the cursor says so
 			let response = ui.interact(preview, egui::Id::unique("preview-gestures"), Sense::click_and_drag());
 			if response.dragged() {
 				self.preview.pan_by(response.drag_delta());
@@ -5329,8 +4529,6 @@ impl App {
 				ui.ctx().set_cursor_icon(if response.dragged() { CursorIcon::Grabbing } else { CursorIcon::Grab });
 			}
 
-			// the archive tree's own folds (P28's long tail): the row under the pointer is what a
-			// click answers to, and only a folder answers — a hand says so before the click lands
 			if let Some(rows) = self.preview.archive_tree(preview) {
 				for (row, rect, dir) in rows {
 					let response = ui.interact(rect, egui::Id::unique(("archive-row", row)), Sense::click());
@@ -5340,10 +4538,6 @@ impl App {
 				}
 			}
 
-			// the preview's own overlay scrollbar (P38③): registered after the whole-column
-			// gesture widget and the tree's rows, so its own ten points are the top-most piece of
-			// the column — before this order the column's drag swallowed the thumb's, and the
-			// document previews' scrollbar was dead on every kind
 			if let Some((content, offset, view)) = self.preview.extent()
 				&& let Some(requested) = self.overlay_bar(ui, preview, 1, content, view, offset)
 			{
@@ -5354,7 +4548,6 @@ impl App {
 			self.preview.hide();
 		}
 
-		// the separators: 1px of structure, 7px of drag, 2px of accent when they are alive
 		let visible = [ columns.parent.is_some(), true, columns.preview.is_some() ];
 		for (x, left, right) in columns.seps {
 			let zone = Rect::from_min_max(pos2(x - chrome::SEP_ZONE * 0.5, body.min.y), pos2(x + chrome::SEP_ZONE * 0.5, body.max.y));
@@ -5382,8 +4575,6 @@ impl App {
 		}
 	}
 
-	/// The skeleton (§1.3): icon placeholders and bars, static — no shimmer — and only after the
-	/// directory has kept a person waiting.
 	fn skeleton(&mut self, painter: &Painter, column: Rect, rows_visible: usize, snapshot: &Snapshot) {
 		let waited = snapshot.started.is_none_or(|at| at.elapsed() >= SKELETON_AFTER);
 		if !waited {
@@ -5404,9 +4595,6 @@ impl App {
 		}
 	}
 
-	/// One overlay scrollbar (§3 总规则): 6px, asleep until it is touched, awake for 1.2s and then
-	/// fading out over 200ms; draggable while it is there. A drag asks for the offset under the
-	/// pointer, which the caller applies to whatever it is the scrollbar of.
 	fn overlay_bar(&mut self, ui: &mut Ui, column: Rect, which: usize, content: f32, visible: f32, offset: f32) -> Option<f32> {
 		let tokens = self.tokens;
 		let track = Rect::from_min_max(pos2(column.max.x - 10.0, column.min.y + 4.0), pos2(column.max.x, column.max.y - 4.0));
@@ -5435,9 +4623,6 @@ impl App {
 		None
 	}
 
-	/// The status bar (§2.5): the mode, the cursor's permissions, what is busy, where the cursor
-	/// is, what is selected — and on the right, the view's own truth: the filter, the sort, and
-	/// which way it runs.
 	fn status_bar(&mut self, ui: &mut Ui, area: Rect, small: &FontId) {
 		let tokens = self.tokens;
 		let painter = ui.painter().clone();
@@ -5449,7 +4634,6 @@ impl App {
 		let middle = rect.center().y;
 		let cell = painter.layout_no_wrap("0".to_owned(), small.clone(), tokens.text).size().x;
 
-		// 1. the mode badge: the one accent block that is always there
 		let select = !self.selection.is_empty();
 		let badge = if select { "SELECT" } else { "NORMAL" };
 		let width = painter.layout_no_wrap(badge.to_owned(), small.clone(), tokens.accent_ink).size().x + 12.0;
@@ -5458,7 +4642,6 @@ impl App {
 		painter.text(badge_rect.center(), Align2::CENTER_CENTER, badge, small.clone(), tokens.accent_ink);
 		at = badge_rect.max.x + 12.0;
 
-		// 2. the cursor's permissions: three colours, the way the baseline reads them
 		let perm = chrome::perm(self.selected_entry().and_then(|entry| entry.mode));
 		for (i, letter) in perm.into_iter().enumerate() {
 			let colour = match letter {
@@ -5471,7 +4654,6 @@ impl App {
 		}
 		at += 9.0 * cell + 12.0;
 
-		// 3. what is busy: hidden entirely when nothing is
 		if let Some(busy) = self.busy() {
 			let label = busy.rate.clone().unwrap_or_else(|| busy.title.clone());
 			let width = painter.layout_no_wrap(label.clone(), small.clone(), tokens.busy).size().x;
@@ -5483,7 +4665,6 @@ impl App {
 			at = bar.max.x + 8.0 + width + 12.0;
 		}
 
-		// 4. where the cursor is: the position said as a fraction of the whole
 		let len = self.tab().view.len();
 		if len > 0 {
 			let current = (self.cursor() + 1).to_string();
@@ -5494,8 +4675,6 @@ impl App {
 			at += width + painter.layout_no_wrap(total, small.clone(), tokens.subtext).size().x + 12.0;
 		}
 
-		// 5. what is held: the selection (▲ warn), a cut (● err) and a yank (◆ busy) — each
-		// hidden while it is empty, and each in the colour the baseline gives it
 		let counts = [
 			(self.selection.len(), "▲", tokens.warn),
 			(self.yank.as_ref().filter(|yank| yank.cut).map_or(0, |yank| yank.paths.len()), "●", tokens.err),
@@ -5512,15 +4691,9 @@ impl App {
 			at += width + 12.0;
 		}
 
-		// the right group: the view's own truth, said last — the filter's prefix, the sort's own
-		// word and the arrow. The linemode cell stood at its end and is gone (P33⑭): the linemode
-		// is what the rows themselves show, not a word that stands in the corner
 		let right = right_group(self.sort, self.tab().symlinks, self.tab().filter.as_deref());
 		let start = rect.max.x - 12.0 - painter.layout_no_wrap(right.clone(), small.clone(), tokens.subtext).size().x;
 
-		// and, left of it, the index panel's own button (P33⑰): the mouse's door to the place `i`
-		// opens — Action::Index's arm calls this same function, there is no second door — and while
-		// the panel is the index the button wears the accent, a second press being the way out
 		let open = self.index_open();
 		let name = "索引";
 		let name_width = painter.layout_no_wrap(name.to_owned(), small.clone(), tokens.subtext).size().x;
@@ -5553,14 +4726,11 @@ impl App {
 
 		painter.text(pos2(start, middle), Align2::LEFT_CENTER, right, small.clone(), tokens.subtext);
 
-		// the one separator: between the two big groups, and only when they both have room
 		if start - 12.0 > at {
 			painter.line_segment([ pos2(start - 10.0, rect.min.y + 6.0), pos2(start - 10.0, rect.max.y - 6.0) ], (1.0, tokens.border));
 		}
 	}
 
-	/// What the status bar's busy group shows: the operations in flight, or the one thing that is
-	/// ever busy here until they land — a directory being read past its moment.
 	fn busy(&self) -> Option<Progress> {
 		if let Some(job) = &self.job {
 			return Some(Progress {
@@ -5602,8 +4772,6 @@ impl App {
 		}
 	}
 
-	/// The in-place rename's field (§4.3): the cursor row's name becomes a real input, its border
-/// says whether the name can land, and the caret sits where the seat the key asked for put it.
 	fn draw_item_rename(&self, ui: &Ui, list: Rect, first: usize, fraction: f32, advance: f32, font: &FontId) {
 		let Some(rename) = &self.item_rename else { return };
 		let tokens = self.tokens;
@@ -5644,16 +4812,12 @@ impl App {
 		let clipped = painter.with_clip_rect(Rect::from_min_max(field.min + vec2(6.0, 0.0), field.max - vec2(6.0, 0.0)));
 		clipped.text(pos2(field.min.x + 6.0, field.center().y), Align2::LEFT_CENTER, text.clone(), font.clone(), tokens.text);
 
-		// the caret: the buffer's own prefix, measured in cells — the font is one width
 		let prefix = &text[..rename.edit.cursor.min(text.len())];
 		let caret = field.min.x + 6.0 + cells(prefix, advance);
 		let caret_rect = Rect::from_min_max(pos2(caret, field.center().y - 9.0), pos2(caret + 2.0, field.center().y + 9.0));
 		painter.rect_filled(caret_rect, 0.0, tokens.accent);
 		anchor_ime(ui, field, caret_rect);
 
-		// and what stands in the facts' place while the field is there: why the name cannot land.
-		// The facts the rows drew are covered first — two strings right-aligned in one seat would
-		// read as neither.
 		if let Some(note) = rename.note {
 			let cover = Rect::from_min_max(pos2(row.max.x - advance - facts_width - 4.0, row.min.y), pos2(row.max.x, row.max.y));
 			painter.rect_filled(cover, 0.0, tokens.base);
@@ -5661,8 +4825,6 @@ impl App {
 		}
 	}
 
-	/// The bulk editor (§4.1): the column of names, the plan against the disk, and a button that
-	/// says what it will do in its own words.
 	fn draw_bulk(&mut self, ui: &mut Ui, area: Rect, painter: &Painter, advance: f32, font: &FontId, small: &FontId) {
 		let tokens = self.tokens;
 		let panel = Rect::from_center_size(
@@ -5670,7 +4832,6 @@ impl App {
 			vec2(640.0f32.min(area.width() - 32.0), 480.0f32.min(area.height() - 32.0)),
 		);
 
-		// the mask first, so the world behind is what is dark; a click on it is a cancel (§4)
 		let mask = ui.interact(area, egui::Id::unique("bulk-mask"), Sense::click());
 		let cancel = mask.clicked() && ui.ctx().input(|i| i.pointer.interact_pos()).is_none_or(|at| !panel.contains(at));
 
@@ -5682,8 +4843,6 @@ impl App {
 		let title = FontId::new(20.0, FontFamily::Name("maple-bold".into()));
 		painter.text(pos2(panel.min.x + 24.0, panel.min.y + 24.0), Align2::LEFT_CENTER, "批量创建", title, tokens.text);
 
-		// the window is the input and nothing else (P33⑦): the live preview column that stood at
-		// its right is gone — a person writes the names, and the footer's own count is the tally
 		let body = Rect::from_min_max(pos2(panel.min.x + 24.0, panel.min.y + 54.0), pos2(panel.max.x - 24.0, panel.max.y - 56.0));
 		painter.text(pos2(body.min.x, body.min.y), Align2::LEFT_TOP, "输入（一行一个）", small.clone(), tokens.subtext);
 
@@ -5693,7 +4852,6 @@ impl App {
 
 		let mut commit = false;
 		if let Some(bulk) = &self.bulk {
-			// the left column: the gutter, the lines, and the caret kept in view
 			let line = LINE_HEIGHT;
 			let visible = ((left.height() - 8.0) / line).floor().max(1.0) as usize;
 			let lines: Vec<&str> = bulk.edit.text.split('\n').collect();
@@ -5716,8 +4874,6 @@ impl App {
 				anchor_ime(ui, left, caret_rect);
 			}
 
-			// the footer: the hint clipped to the space the button leaves, and the button itself, which
-			// says what will happen in its own words
 			let (create, skip) = bulk::tally(&bulk.lines);
 			let label = if skip == 0 { format!("创建 {create} 项") } else { format!("跳过 {skip} 个冲突，创建 {create} 项") };
 			let width = painter.layout_no_wrap(label.clone(), small.clone(), tokens.accent_ink).size().x + 28.0;
@@ -5758,8 +4914,6 @@ impl App {
 		ui.ctx().request_repaint();
 	}
 
-	/// The output sheet (§4.8): what a command left, at the window's bottom above the status bar —
-/// its height by its own content, at most 40% of the window.
 	fn draw_output(&mut self, ui: &mut Ui, area: Rect, small: &FontId) {
 		let Some(output) = &self.output else { return };
 		let tokens = self.tokens;
@@ -5804,10 +4958,6 @@ impl App {
 		}
 	}
 
-	/// The bottom command line (§4.8): the prefix in accent, the line at the body face, the caret
-	/// where the next character lands, and the completion list above the bar.
-	/// The filter field: a one-line strip above the status bar, the pattern and its caret — the
-	/// same shape the command line wears, because they are the same kind of thing.
 	fn draw_filter(&mut self, ui: &mut Ui, area: Rect, advance: f32, font: &FontId, small: &FontId) {
 		let Some(edit) = &self.filter else { return };
 
@@ -5825,8 +4975,6 @@ impl App {
 		let x = rect.min.x + 12.0 + pw;
 		painter.text(pos2(x, rect.center().y), Align2::LEFT_CENTER, shown, font.clone(), tokens.text);
 
-		// the caret, one cell of a hint after the text — and the IME's anchor at the field's own
-		// foot, every frame, blink or no blink (P33⑤)
 		let caret = x + cells(shown, advance);
 		let caret_rect = Rect::from_min_size(pos2(caret, rect.center().y - 8.0), vec2(2.0, 16.0));
 		if ui.ctx().input(|i| i.time).fract() < 0.5 {
@@ -5861,7 +5009,6 @@ impl App {
 		painter.rect_filled(caret_rect, 0.0, tokens.accent);
 		anchor_ime(ui, bar, caret_rect);
 
-		// the completion: above the bar, at most eight of them, the standing one marked
 		if let Some(comp) = &cmdline.comp {
 			let rows = comp.items.len().min(8);
 			let height = rows as f32 * 28.0;
@@ -5889,7 +5036,6 @@ impl App {
 		}
 	}
 
-	/// open-with (§4.4): a 480px modal with the field, and the history and `$PATH` beneath it.
 	fn draw_openwith(&mut self, ui: &mut Ui, area: Rect, advance: f32, font: &FontId, small: &FontId) {
 		let Some(open) = &self.openwith else { return };
 		let tokens = self.tokens;
@@ -5925,7 +5071,6 @@ impl App {
 		painter.rect_filled(caret_rect, 0.0, tokens.accent);
 		anchor_ime(ui, field, caret_rect);
 
-		// the completion: right below the field, at most eight, the history's own read at the right
 		if let Some(comp) = &open.comp {
 			let rows = comp.items.len().min(8);
 			let rect = Rect::from_min_size(pos2(field.min.x, field.max.y + 6.0), vec2(field.width(), rows as f32 * 28.0));
@@ -5973,25 +5118,16 @@ impl App {
 		ui.ctx().request_repaint();
 	}
 
-	/// The fuzzy panel (§5.3): non-modal, anchored at the top fifth, filtered at each keystroke
-	/// with the matched characters in accent. Behind it the columns stay as they are — the panel
-	/// is a fast lane, not a room.
 	fn draw_fuzzy(&mut self, ui: &mut Ui, area: Rect, font: &FontId, small: &FontId) {
 		let Some(fuzzy) = &self.fuzzy else { return };
-		// a click on the query line steps into the box (P33⑬) — applied after the drawing, once the
-		// panel's own borrow has said its last
 		let mut clicked_query = false;
 		let tokens = self.tokens;
 		let painter = ui.painter().clone();
 		let advance = painter.layout_no_wrap("0".to_owned(), font.clone(), tokens.text).size().x;
 
-		// the user's own micro-adjustment (P33's interlude, their words: 「再调宽一点点、一丁点、后面一个字
-		// 重合了」): the index panel grew 640 → 720 so a long path and the right-hand column stop
-		// overlapping by a character. The find panels' 860 is untouched.
 		let width: f32 = if matches!(fuzzy.mode, FuzzyMode::FindNames | FuzzyMode::FindText) { 860.0 } else { 720.0 };
 		let width = width.min(area.width() - 80.0);
 		let rows = fuzzy.hits.len().min(12);
-		// the index panel's zone headers take a row of their own, and their height with them
 		let headers = if fuzzy.mode == FuzzyMode::Index {
 			(0..rows)
 				.filter(|i| {
@@ -6007,13 +5143,10 @@ impl App {
 		} else {
 			0.0
 		};
-		// two panels have a second footer line to pay for (P24's index, P21's device panel)
 		let extra_line = matches!(fuzzy.mode, FuzzyMode::Devices { .. });
 		let height = 44.0 + rows as f32 * 32.0 + headers * 18.0 + 26.0 + if extra_line { 18.0 } else { 0.0 };
 		let panel = Rect::from_min_size(pos2(area.center().x - width * 0.5, area.min.y + area.height() * 0.2), vec2(width, height));
 
-		// the panel swallows clicks so the list behind it does not act under a live panel — and the
-		// query line's own click steps into the box (P33⑬), the way the help panel's box does
 		let _ = ui.interact(panel, egui::Id::unique("fuzzy-panel"), Sense::click());
 		if !fuzzy.focus.inside && let Some(true) = Some(ui.interact(
 			Rect::from_min_size(pos2(panel.min.x, panel.min.y), vec2(panel.width(), 44.0)),
@@ -6027,7 +5160,6 @@ impl App {
 		painter.rect_filled(panel, 8.0, tokens.raised);
 		painter.rect_stroke(panel, 8.0, (1.0, tokens.border_strong), egui::StrokeKind::Inside);
 
-		// the query line: 20px, with the caret where the next character lands
 		let query_at = pos2(panel.min.x + 16.0, panel.min.y + 22.0);
 		painter.text(query_at, Align2::LEFT_CENTER, "\u{f002}", small.clone(), tokens.disabled);
 		let text_at = query_at.x + cells("\u{f002} ", advance * 1.6);
@@ -6041,17 +5173,12 @@ impl App {
 					.map_or(0.0, |prefix| painter.layout_no_wrap(prefix.to_owned(), query_font.clone(), tokens.text).size().x)
 		};
 
-		// a long query scrolls the box rather than running out of it (P27's third item): the text
-		// and the caret both stand `shift` to the left once the caret has passed the right edge,
-		// and the box's own rectangle is what clips them
 		let room = panel.max.x - 16.0;
 		let shift = (caret_at(&painter) - room).max(0.0);
 		let boxed = painter
 			.with_clip_rect(Rect::from_min_max(pos2(query_at.x, panel.min.y), pos2(panel.max.x, panel.min.y + 44.0)));
 		boxed.text(pos2(text_at - shift, query_at.y), Align2::LEFT_CENTER, &fuzzy.query.text, query_font.clone(), tokens.text);
 
-		// the caret lives only while the box holds the keyboard, and the line under the query says
-		// which half has it (P33⑬): accent inside, border on the list
 		if fuzzy.focus.inside {
 			let caret = caret_at(&painter) - shift;
 			let caret_rect = Rect::from_min_max(pos2(caret, query_at.y - 11.0), pos2(caret + 2.0, query_at.y + 11.0));
@@ -6063,15 +5190,12 @@ impl App {
 			(1.0, if fuzzy.focus.inside { tokens.accent } else { tokens.border }),
 		);
 
-		// the rows: the standing one marked, the match in accent, the score at the right
 		let clipped = painter.with_clip_rect(panel);
 		let mut at_y = panel.min.y + 44.0;
-		// the mouse's own way in (P21): a click seats the standing row, a double-click is Enter
 		let (mut seat, mut run) = (None, false);
 		for (i, hit) in fuzzy.hits.iter().take(rows).enumerate() {
 			let Some(item) = fuzzy.items.get(hit.at) else { continue };
 
-			// the zone's own header where the grouping changes (P14): a quiet 13px line
 			let before = if i == 0 {
 				""
 			} else {
@@ -6110,7 +5234,6 @@ impl App {
 			clipped.text(pos2(row.max.x - 12.0, row.center().y), Align2::RIGHT_CENTER, right, small.clone(), tokens.disabled);
 		}
 
-		// the footer: what Enter will do, and where the panel already is
 		let (what, hint) = match fuzzy.mode {
 			FuzzyMode::Index => ("跳转", INDEX_HINT),
 			FuzzyMode::Devices { unmount, .. } => {
@@ -6125,7 +5248,6 @@ impl App {
 		let _ = what;
 		let notice = fuzzy.notice.as_ref().filter(|(_, at)| at.elapsed() < NOTICE_ALIVE);
 		if let Some((_, at)) = notice {
-			// the message has its own clock: the panel has to paint when it runs out
 			ui.ctx().request_repaint_after(NOTICE_ALIVE - at.elapsed());
 		}
 
@@ -6146,7 +5268,6 @@ impl App {
 			if notice.is_some() { tokens.err } else { tokens.disabled },
 		);
 		if extra_line {
-			// the device panel lists its other keys
 			painter.text(pos2(panel.min.x + 12.0, panel.max.y - 31.0), Align2::LEFT_CENTER, DEVICE_HINT_URI, small.clone(), tokens.disabled);
 		}
 		painter.text(
@@ -6157,7 +5278,6 @@ impl App {
 			tokens.disabled,
 		);
 
-		// what the mouse decided: the click seats the standing row, the double-click is Enter
 		if let Some(at) = seat
 			&& let Some(fuzzy) = &mut self.fuzzy
 		{
@@ -6173,8 +5293,6 @@ impl App {
 		}
 	}
 
-	/// The dangerous confirmation (§4.5): `err` words, the items it is about, the focus on cancel,
-	/// and y/n as the keyboard's own answers.
 	fn draw_confirm(&mut self, ui: &mut Ui, area: Rect, small: &FontId) {
 		let Some(confirm) = &self.confirm else { return };
 		let tokens = self.tokens;
@@ -6237,7 +5355,6 @@ impl App {
 			tokens.disabled,
 		);
 
-		// the buttons answer too: the keyboard is quicker, but the mouse is allowed
 		let mut yes = false;
 		let mut no = false;
 		if ui.interact(yes_rect, egui::Id::unique("confirm-yes"), Sense::click()).clicked() {
@@ -6255,10 +5372,6 @@ impl App {
 		ui.ctx().request_repaint();
 	}
 
-	/// The bin's own view (the `R b` key): the system's trash read back — the name, where it came
-	/// from, when it went — with restore, purge and empty on the keyboard.
-	/// The bin as the middle column's own view (P19): the icon, the name, where it came from and when
-	/// it went, with the list's cursor, wheel, click and scrolling — no popup, no dimmed backdrop.
 	fn draw_trash_list(&mut self, ui: &mut Ui, column: Rect, font: &FontId, advance: f32) {
 		let tokens = self.tokens;
 		let small = FontId::new(FONT_SMALL, FontFamily::Monospace);
@@ -6286,7 +5399,6 @@ impl App {
 		let hover = hover_at(self.hover, list, ROW_HEIGHT, first);
 
 		if loading {
-			// the bin's own read: the same skeleton the directory's list wears, for the same reason
 			let rows = chrome::skeleton_rows(None, rows_visible);
 			for row in 0..rows {
 				let top = column.min.y + row as f32 * ROW_HEIGHT;
@@ -6303,10 +5415,6 @@ impl App {
 
 		let items = self.bin().expect("up");
 		for (i, item) in items.items.iter().enumerate().skip(first).take(rows_visible + 1) {
-			// the row is placed by its place in the viewport, not by its place in the bin (P33③):
-			// the two only agree at the top, and with the absolute index every scrolled row landed
-			// `first` rows too low — the viewport's top row bare, and a deep scroll off the column
-			// altogether. The click loop below has always spelled it the right way.
 			let at = i - first;
 			let top = list.min.y + (at as f32 - fraction) * ROW_HEIGHT;
 			let row = Rect::from_min_size(pos2(list.min.x, top), vec2(list.width(), ROW_HEIGHT));
@@ -6338,7 +5446,6 @@ impl App {
 				tokens.text,
 			);
 
-			// where it came from, and when it went — the two things a bin's row owes a person
 			let parent = frecency::display(&item.original_parent);
 			clipped.text(
 				pos2(row.min.x + row.width() * 0.46, row.center().y),
@@ -6354,8 +5461,6 @@ impl App {
 			clipped.text(pos2(row.max.x - 12.0, row.center().y), Align2::RIGHT_CENTER, when, small.clone(), tokens.disabled);
 		}
 
-		// the mouse's own way in: a click seats the cursor on the row it landed on, and a click on
-		// the blank decides nothing — the list's own contract, in the bin's own list
 		if !loading && !empty {
 			let mut clicked = None;
 			for i in 0..rows_visible + 1 {
@@ -6386,7 +5491,6 @@ impl App {
 			}
 		}
 
-		// how many are in there: the count the popup's header used to say, at the column's foot
 		if !loading && !empty {
 			let label = format!("{len} 项");
 			let width = painter.layout_no_wrap(label.clone(), small.clone(), tokens.subtext).size().x + 16.0;
@@ -6396,8 +5500,6 @@ impl App {
 		}
 	}
 
-	/// The bottom hint line: what the keys do, and only while the bin is the tab's own view (P19/P27)
-	/// — the one place where the list's keys mean the bin's own things.
 	fn draw_trash_hint(&mut self, ui: &mut Ui, area: Rect, small: &FontId) {
 		if !self.in_bin() {
 			return;
@@ -6419,7 +5521,6 @@ impl App {
 		);
 	}
 
-	/// The one-line prompt (§ `c z`): a small modal with the title, the field and its caret.
 	fn draw_prompt(&mut self, ui: &mut Ui, area: Rect, advance: f32, font: &FontId, small: &FontId) {
 		let Some(prompt) = &self.prompt else { return };
 		let tokens = self.tokens;
@@ -6452,8 +5553,6 @@ impl App {
 		);
 	}
 
-	/// The toasts (§5.2): a corner note, sliding in from the right, thinning out after its stay —
-	/// and an undo link when the thing that happened can be taken back.
 	fn draw_toasts(&mut self, ui: &mut Ui, area: Rect, small: &FontId) {
 		if self.toasts.is_empty() {
 			return;
@@ -6464,9 +5563,6 @@ impl App {
 		let now = Instant::now();
 		let len = self.toasts.len();
 		let height = 40.0f32;
-		// the note is as wide as what it says (P42②): the text measured, the bar and the paddings
-		// and the undo's seat added — clamped only by the window's own width, so a long sentence
-		// reads whole instead of being cut to a fixed sheet
 		let max_w = (area.width() - 24.0).max(160.0);
 		let cell = painter.layout_no_wrap("0".to_owned(), small.clone(), tokens.text).size().x;
 		let (mut undo_at, mut dismiss_at) = (None, None);
@@ -6491,8 +5587,6 @@ impl App {
 				toast::Kind::Err => tokens.err,
 			};
 
-			// a click on the note takes it away (P30): registered before the undo link, so the
-			// link keeps the last word on its own little rect
 			if ui.interact(rect, egui::Id::unique(("toast", i)), Sense::click()).clicked() {
 				dismiss_at = Some(i);
 			}
@@ -6529,25 +5623,18 @@ impl App {
 		if let Some(at) = undo_at
 			&& let Some(undo) = self.toasts.take_undo(at)
 		{
-			// one action is undone once (P33⑫): the stack's copy of it goes with the link
 			if let Some(position) = self.undo.iter().rposition(|held| *held == undo) {
 				self.undo.remove(position);
 			}
 			self.run_undo(undo);
 		}
 
-		// the fade and the slide are their own reason to paint: while one is up, keep the frames
-		// coming until it has gone
 		self.toasts.tick(now);
 		ui.ctx().request_repaint_after(Duration::from_millis(33));
 	}
 
-	/// The `which` hint (P18): the first key of a chord opened a family, and this is what is in it —
-	/// the keys still to press and the keymap's own description, in a small card above the status
-	/// bar. Non-modal: the list stays readable behind it, and the next key is what dismisses it.
 	fn draw_which(&mut self, ui: &mut Ui, area: Rect, small: &FontId) {
 		let Some(sequence) = &self.sequence else { return };
-		// a modal owns the keyboard and the screen: its own hint would be noise
 		if self.help || self.fuzzy.is_some() || self.confirm.is_some() || self.prompt.is_some() {
 			return;
 		}
@@ -6576,8 +5663,6 @@ impl App {
 		painter.rect_filled(panel, 8.0, tokens.raised);
 		painter.rect_stroke(panel, 8.0, (1.0, tokens.border_strong), egui::StrokeKind::Inside);
 
-		// the keys right-aligned in one column and the descriptions left-aligned in the next, the
-		// way the help overlay lays its own rows out
 		let clipped = painter.with_clip_rect(panel);
 		for (i, (keys, desc)) in family.iter().take(rows).enumerate() {
 			let y = panel.min.y + 8.0 + i as f32 * row_h + row_h * 0.5;
@@ -6586,7 +5671,6 @@ impl App {
 		}
 	}
 
-	/// The help overlay: the user's own bindings, read out of their own keymap, over everything.
 	fn draw_help(&mut self, ui: &mut Ui, area: Rect, advance: f32, font: &FontId) {
 		let tokens = self.tokens;
 		let line = LINE_HEIGHT;
@@ -6597,9 +5681,6 @@ impl App {
 		let painter = ui.painter().clone();
 		painter.rect_filled(area, 0.0, Color32::from_black_alpha(200));
 
-		// the panel is the content's own size (P33①): the keys' widest column and the words' widest
-		// column decide the width — the first version drew a slab 86% of the window for a table of
-		// two columns — and the rows decide the height, capped at 70% of it
 		let cells_of = |text: &str| text.chars().map(crate::list::cell_width).sum::<u32>() as usize;
 		let key_cells = visible.iter().filter_map(|at| rows.get(*at)).map(|(on, ..)| cells_of(on)).max().unwrap_or(8).clamp(4, 12);
 		let word_cells = visible.iter().filter_map(|at| rows.get(*at)).map(|(_, _, desc)| cells_of(desc)).max().unwrap_or(16).clamp(8, 30);
@@ -6616,8 +5697,6 @@ impl App {
 			tokens.accent,
 		);
 
-		// the box that filters the rows (P21): a click on it, or `f`, puts the keyboard inside —
-		// under the header line, never over it, and as wide as the panel it stands in
 		let field = Rect::from_min_size(panel.min + Vec2::new(advance, line * 1.45), Vec2::new(panel.width() - advance * 2.0, line * 1.2));
 		painter.rect_filled(field, 4.0, tokens.crust);
 		painter.rect_stroke(
@@ -6647,7 +5726,6 @@ impl App {
 			self.help_focus.enter();
 		}
 
-		// the rows: the standing one marked and kept in view, the mouse's click seating it
 		let top = panel.min.y + line * 2.9;
 		let height = ((panel.max.y - top - line * 1.6) / line).floor().max(1.0) as usize;
 		if self.help_at < self.help_from {
@@ -6686,7 +5764,6 @@ impl App {
 			self.help_at = at.min(visible.len().saturating_sub(1));
 		}
 
-		// the footer: the table's own words for the three keys, and how many rows the query kept
 		painter.text(
 			pos2(panel.min.x + advance, panel.max.y - line * 1.15),
 			Align2::LEFT_TOP,
@@ -6703,9 +5780,6 @@ impl App {
 		);
 	}
 
-	/// The visible rows of a column: an icon, a name, and the facts — with the cursor's own row
-	/// marked. `from` is the first row drawn and `fraction` its offset, which is where the smooth
-	/// scrolling comes from: this is the only place a row's position is decided.
 	#[allow(clippy::too_many_arguments)]
 	#[allow(clippy::too_many_arguments)]
 	fn rows(
@@ -6723,21 +5797,14 @@ impl App {
 		fraction: f32,
 		from: usize,
 		quiet: bool,
-		// whether the size/time facts share the row (P12: only the middle column's do)
 		meta: bool,
 		hover: Option<usize>,
-		// what `/` is looking for, if anything: the letters the name holds are drawn in the hit
-		// colour (P21)
 		find: Option<&str>,
 	) {
 		let row_h = ROW_HEIGHT;
 		let rows = (column.height() / row_h).floor().max(1.0) as usize + 1;
-		// a row that only half fits is cut at the column's edge (P27's second item): the list has
-		// always drawn a row past its own rectangle while the scroll settles, and the whole rows
-		// of the column beside it showed through the gap
 		let clipped = painter.with_clip_rect(column);
 		let painter = &clipped;
-		// the facts read in the secondary face, the one the spec gives the metadata (§1.1)
 		let small = FontId::new(FONT_SMALL, FontFamily::Monospace);
 		let identity;
 		let view: &[usize] = match view {
@@ -6766,11 +5833,9 @@ impl App {
 			if position == cursor {
 				painter.rect_filled(row, 0.0, tokens.cursor_bg);
 				if !quiet {
-					// the cursor's mark: two pixels of accent down the row's own left edge
 					painter.rect_filled(Rect::from_min_size(row.min, Vec2::new(2.0, row_h)), 0.0, tokens.accent);
 				}
 			} else if Some(position) == hover {
-				// a row the pointer is over: the cursor's background at half its weight (spec §1.2)
 				painter.rect_filled(row, 0.0, tokens.cursor_bg.gamma_multiply(0.5));
 			}
 
@@ -6783,8 +5848,6 @@ impl App {
 				if quiet { colour.gamma_multiply(0.7) } else { colour },
 			);
 
-			// the facts, when this column shows them at all — and only as many as the width can
-			// pay for (the ladder is `list::row_facts`' own)
 			let facts = crate::list::row_facts(meta, columns, &entry_facts(entry), column.width(), advance);
 			let facts_width = facts
 				.as_ref()
@@ -6799,8 +5862,6 @@ impl App {
 				);
 			}
 
-			// the name's budget keeps the spec's 16px of air before the facts, when it has facts
-			// to keep the air for (§1.1)
 			let facts_width = if facts_width > 0.0 { facts_width + 16.0 } else { 0.0 };
 			let budget =
 				((column.width() - ICON_BOX - 3.0 * advance - facts_width) / advance).floor().max(1.0) as u32;
@@ -6810,7 +5871,6 @@ impl App {
 			let at = egui::pos2(column.min.x + ICON_BOX + 2.0 * advance, top + row_h * 0.5);
 
 			match find.map(|pattern| crate::app::find_hits(&entry.name, pattern)) {
-				// the letters the search is about are coloured, the rest of the name keeps its own
 				Some(positions) if !positions.is_empty() => {
 					text_hits(painter, at, name, &positions, budget as usize, font, advance, name_colour, tokens.accent);
 				}
@@ -6821,10 +5881,6 @@ impl App {
 		}
 	}
 
-/// The spot card (§4.6): the cursor's own file, described in an `Area` that floats over the
-/// preview column's top-left — 320 wide, 12px off both edges, a fade-in from the left, because
-/// the card belongs to the column it points at. `Tab`/`Esc` put it away and `j/k`/`h/l` walk the
-/// list underneath without moving the card's anchor.
 	fn draw_menu(&mut self, ui: &mut Ui, area: Rect, font: &FontId, small: &FontId) {
 		let Some(menu) = self.menu.as_ref() else { return };
 		let tokens = self.tokens;
@@ -6832,24 +5888,14 @@ impl App {
 		let rows = menu.rows();
 		let apps_page = menu.page == crate::menu::Page::Apps;
 
-		// the rows' own heights: a zone header is a line, an item is a row, and the applications
-		// page pays a line for its query (P35's addendum — the dialog it mirrors is search-first).
-		// A greyed item (P33⑱'s paste) is not a header: only the applications page draws those.
 		let is_header = |live: bool| apps_page && !live;
 		let row_heights: Vec<f32> = rows.iter().map(|(_, _, live)| if is_header(*live) { 18.0 } else { crate::menu::MENU_ROW_H }).collect();
 
-		// the applications page's own window (P36③): twelve walked rows at most, fewer when the
-		// window itself is short — the panel is a compact small window, and it starts where the
-		// scroll stands (kept in sight by `follow`, dragged by the wheel)
 		let vis = menu.visible_rows(self.body.height());
 		let walked = menu.rows_walked();
 		let scroll = menu.scroll.min(walked.saturating_sub(vis.max(1)));
 		let end = (scroll + vis).min(walked);
 
-		// the applications page's own width (P38①): the longest line the window shows — name and
-		// its hint — or the token floor, whichever is wider, so an empty window keeps a panel
-		// instead of shrinking to its query box (the user's frame: ninety points, the words
-		// drawn outside). The item pages stay their own width.
 		let length = |label: &str| painter.layout_no_wrap(label.to_owned(), font.clone(), tokens.text).size().x;
 		let width = if apps_page {
 			let mut longest = 0.0f32;
@@ -6868,12 +5914,9 @@ impl App {
 			224.0
 		};
 
-		// the zone line, pinned (P36③, the choice over scrolling it away): while the window
-		// stands inside a zone whose own header scrolled under, its name stays at the top
 		let app_rows = apps_page.then(|| menu.app_rows());
 		let pinned = app_rows.as_ref().is_some_and(|rows| rows.get(scroll).is_some_and(|row| row.zone.is_none()));
 
-		// the panel's own height: what the window actually shows, never the whole roster
 		let mut list_height = 0.0;
 		let mut seen = 0usize;
 		for (i, (_, _, live)) in rows.iter().enumerate() {
@@ -6887,7 +5930,6 @@ impl App {
 		let height = (30.0 + list_height + if apps_page { 28.0 } else { 0.0 } + if pinned { 18.0 } else { 0.0 } + 22.0)
 			.max(if apps_page { crate::menu::menu_apps_floor() } else { 0.0 });
 
-		// and it never hangs off the window (P36③): a compact window has to fit where it stands
 		let anchor = pos2(
 			menu.anchor.x.min(area.max.x - width - 8.0).max(area.min.x + 8.0),
 			menu.anchor.y.min(area.max.y - height - 8.0).max(area.min.y + 8.0),
@@ -6895,7 +5937,6 @@ impl App {
 		let panel = Rect::from_min_size(anchor, vec2(width, height));
 		self.menu_panel = Some(panel);
 
-		// no mask: a click outside is what puts it away, and the rows keep their own clicks
 		let outside = ui.interact(area, egui::Id::unique("menu-outside"), Sense::click());
 		if outside.clicked() && ui.ctx().input(|i| i.pointer.interact_pos()).is_none_or(|at| !panel.contains(at)) {
 			self.menu = None;
@@ -6905,8 +5946,6 @@ impl App {
 		painter.rect_filled(panel, 8.0, tokens.raised);
 		painter.rect_stroke(panel, 8.0, (1.0, tokens.border_strong), egui::StrokeKind::Inside);
 
-		// everything the panel says is clipped to it (P38①): over-long names are cut by `clipped`
-		// and the clip is the backstop — not one word is ever drawn outside the rect
 		let painter = painter.with_clip_rect(panel);
 
 		let Some(menu) = self.menu.as_ref() else { return };
@@ -6918,7 +5957,6 @@ impl App {
 			tokens.disabled,
 		);
 
-		// the applications page's query line (P35): what filters both zones, with its own caret
 		let mut top = panel.min.y + 26.0;
 		if apps_page {
 			let field = Rect::from_min_size(pos2(panel.min.x + 6.0, top), vec2(width - 12.0, 22.0));
@@ -6946,8 +5984,6 @@ impl App {
 		let mut at = 0usize;
 		for (i, (label, hint, live)) in rows.iter().enumerate() {
 			if is_header(*live) {
-				// a zone header (P35): a quiet line of its own, read and not walked — drawn when
-				// its zone's first row is in the window
 				if at >= scroll && at < end {
 					painter.text(
 						pos2(panel.min.x + 12.0, top + 9.0),
@@ -6966,7 +6002,6 @@ impl App {
 				continue;
 			}
 
-			// the pinned zone (P36③): the window's first row, its own header scrolled under
 			if at == scroll && pinned {
 				let zone = app_rows.as_ref().and_then(|rows| rows.get(at)).map_or("", crate::menu::zone_of);
 				painter.text(pos2(panel.min.x + 12.0, top + 9.0), Align2::LEFT_CENTER, zone, small.clone(), tokens.disabled);
@@ -6976,10 +6011,6 @@ impl App {
 			let row = Rect::from_min_size(pos2(panel.min.x + 6.0, top), vec2(width - 12.0, 24.0));
 			let response = ui.interact(row, egui::Id::unique(("menu-row", at)), Sense::click());
 
-			// the highlight is the standing row's alone (P36①): the pointer's hover no longer
-			// moves it — that quiet re-seat was the bug the user hit (walk to 打开方式, Enter,
-			// and the hovered row had taken the standing away). A click seats its row and acts;
-			// Enter always takes the row that is lit
 			if at == standing {
 				painter.rect_filled(row, 4.0, tokens.cursor_bg);
 				painter.rect_filled(Rect::from_min_size(row.min, vec2(2.0, row.height())), 0.0, tokens.accent);
@@ -7016,8 +6047,6 @@ impl App {
 			tokens.disabled,
 		);
 
-		// a click sets the standing row first, then acts on it — Enter takes the row already lit,
-		// so the two are one door (P36①), the click's seat just its way in
 		if let Some(at) = picked
 			&& let Some(menu) = &mut self.menu
 		{
@@ -7028,8 +6057,6 @@ impl App {
 		}
 	}
 
-	/// The cursor's own file, described in an `Area` that floats over the preview column's top-left
-	/// — 320 wide, 12px off both edges — for `Tab`: see §4.6.
 	fn draw_spot(&mut self, ui: &mut Ui, body: Rect) {
 		if !self.spot {
 			return;
@@ -7047,18 +6074,12 @@ impl App {
 		let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
 		let (glyph, colour) = list::icon_for(&name, entry.as_ref().is_some_and(|e| e.dir), entry.as_ref().and_then(|e| e.mode).is_some_and(|mode| mode & 0o111 != 0), &tokens);
 
-		// every attribute, in Chinese a beginner reads (P23): the type (a link with its target),
-		// the size with its exact bytes, a picture's own section — format, pixels, the ratio the
-		// column shows it at, the colour depth (P28② revised) — the owner and the group by name,
-		// the three permission classes as phrases, the link count, the three times whole, the path
 		let shown_width = self.preview.shown_physical(&path).map(|shown| shown[0]).or_else(|| self.preview.fit_width_pixels());
 		let rows = match crate::spot::rows(&path, shown_width) {
 			Some(rows) => rows,
 			None => vec![ ("类型".to_owned(), "读不到这个条目（可能刚被移走）".to_owned()) ],
 		};
 
-		// 320 wide, 12px off the column's edges (§4.6) — and never pushed off the window: a
-		// preview column can be narrower than the card
 		let width = SPOT_WIDTH;
 		let x = if slide {
 			(at.min.x + 12.0).min(body.max.x - width - 12.0).max(body.min.x + 12.0)
@@ -7109,31 +6130,21 @@ impl App {
 	}
 }
 
-/// A chip's width: its name's cells at the body font, in the spec's 100–220px band.
 fn chip_width(name: &str, advance: f32) -> f32 {
 	let cells = name.chars().map(crate::list::cell_width).sum::<u32>();
 	(cells as f32 * advance + CHIP_PAD).clamp(CHIP_MIN, CHIP_MAX)
 }
 
-/// The room a chip's own number badge takes: the digits in the small face, plus the gap before
-/// the name. Past nine the badge simply grows a digit (§2.4's number keys).
 fn number_width(index: usize) -> f32 {
 	let digits = (index + 1).to_string().len() as f32;
 
 	digits * FONT_SMALL * 0.62 + 6.0
 }
 
-/// A string's width in a monospace face, counted in cells — a wide glyph takes two. The carets of
-/// the window's own fields are placed with this.
 fn cells(text: &str, advance: f32) -> f32 {
 	text.chars().map(|c| crate::list::cell_width(c) as f32 * advance).sum()
 }
 
-/// The IME's anchor (P33⑤): every field in this window is drawn by hand, and egui sets the
-/// platform's cursor area only for its own `TextEdit` — without this the Chinese input method's
-/// candidate window had no place to stand. Called where the field's box and the caret's column
-/// are both already known; it must not blink with the caret, so it is set every frame the field
-/// holds the keyboard. The platform reads the field's box and the caret's own thin rectangle.
 fn anchor_ime(ui: &Ui, field: Rect, caret: Rect) {
 	ui.output_mut(|out| {
 		out.ime = Some(egui::output::IMEOutput {
@@ -7145,16 +6156,11 @@ fn anchor_ime(ui: &Ui, field: Rect, caret: Rect) {
 	});
 }
 
-/// Where the output sheet sits: the window's bottom above the status bar, its height by its own
-/// content, at most 40% of the window (§4.8).
 fn output_rect(area: Rect, lines: usize) -> Rect {
 	let height = (34.0 + lines as f32 * 20.0).min(area.height() * 0.4);
 	Rect::from_min_max(pos2(area.min.x, area.max.y - STATUS_HEIGHT - height), pos2(area.max.x, area.max.y - STATUS_HEIGHT))
 }
 
-/// One line with its matched characters in the hit colour: drawn as runs, so a long path costs a
-/// handful of draws rather than one per character. `budget` is how many cells fit — the same
-/// count the list's own clipping pays in.
 #[allow(clippy::too_many_arguments)]
 fn text_hits(
 	painter: &Painter,
@@ -7191,14 +6197,10 @@ fn text_hits(
 	}
 }
 
-
-/// The wall clock as unix seconds: what the frecency stamps its visits with.
 fn now_secs() -> u64 {
 	std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// A search hit's own row: the path, and for a content hit its line and text — the string the
-/// panel matches against and shows.
 fn hit_text(hit: &search::Hit) -> String {
 	let path = frecency::display(&hit.path);
 	match (hit.line, &hit.text) {
@@ -7207,8 +6209,6 @@ fn hit_text(hit: &search::Hit) -> String {
 	}
 }
 
-/// Which tab a `tab_switch` lands on: absolute indexes clamp, relative steps wrap — the way a
-/// ring of tabs reads.
 pub(crate) fn switch_target(len: usize, active: usize, index: isize, relative: bool) -> usize {
 	if len == 0 {
 		return 0;
@@ -7221,8 +6221,6 @@ pub(crate) fn switch_target(len: usize, active: usize, index: isize, relative: b
 	}
 }
 
-/// The keys a replay may type, spelled the way a person would: `j`, `G`, `~`, `Enter`, `C-Enter`.
-/// The single characters go through egui's own name table, so the whole alphabet is here.
 fn replay_key(key: &str) -> Option<(Key, Modifiers)> {
 	let (modifiers, name) = match key.strip_prefix("C-") {
 		Some(rest) => (Modifiers::CTRL, rest),
@@ -7244,12 +6242,10 @@ fn replay_key(key: &str) -> Option<(Key, Modifiers)> {
 		"," => Key::Comma,
 		"." => Key::Period,
 		"/" => Key::Slash,
-		// the help's own key: `?` is what the layout types for shift+slash (P21)
 		"?" => Key::Slash,
 		"[" => Key::OpenBracket,
 		"]" => Key::CloseBracket,
 		"`" => Key::Backtick,
-		// the shifted digit rows the link family and the closer brackets sit on
 		")" => Key::Num0,
 		"(" => Key::Num9,
 		"*" => Key::Num8,
@@ -7261,8 +6257,6 @@ fn replay_key(key: &str) -> Option<(Key, Modifiers)> {
 	Some((key, modifiers))
 }
 
-/// What the layout types for a replay's key: a one-character name types itself, and the tokens —
-/// and anything held with Ctrl — type nothing.
 fn replay_text(key: &str) -> Option<&str> {
 	if key.starts_with("C-") {
 		return None;
@@ -7273,15 +6267,11 @@ fn replay_text(key: &str) -> Option<&str> {
 	(!one.is_control()).then(|| &key[..one.len_utf8()])
 }
 
-/// Whether a replay's step is typed with shift held — upper-case letters and the shifted
-/// punctuation, the way a layout would send them.
 fn replay_shifted(key: &str) -> bool {
 	key.chars().all(|c| c.is_ascii_uppercase())
 		|| matches!(key, "~" | "_" | "+" | "{" | "}" | "|" | ":" | "<" | ">" | "?")
 }
 
-/// One row of the index panel before it becomes a `FuzzyItem` (P14): which zone it belongs to,
-/// what it reads as, what the right column adds, and whether a bookmark's path is gone.
 struct IndexRow {
 	pub zone:   &'static str,
 	pub text:   String,
@@ -7290,10 +6280,6 @@ struct IndexRow {
 	pub broken: bool,
 }
 
-/// The three zones of the index panel, in the order they read: the bookmarks (key badge and all,
-/// a broken path still listed), then the frecency's high scores, then its most recent visits —
-/// a path already said once is not said again, and each zone is capped so the panel stays a
-/// glance.
 fn index_rows(
 	books: &[crate::book::Bookmark],
 	ranked: &[(PathBuf, f64)],
@@ -7307,7 +6293,6 @@ fn index_rows(
 		seen.insert(bookmark.path.clone());
 		rows.push(IndexRow {
 			zone:    "索引",
-			// the path says the name already: the row is the path and nothing else
 			text:    frecency::display(&bookmark.path),
 			right:   None,
 			payload: FuzzyPayload::Index(bookmark.name.clone()),
@@ -7344,8 +6329,6 @@ fn index_rows(
 	rows
 }
 
-/// `M R`: the device the cwd stands on is unmounted (forced — a busy filesystem must not keep a
-/// person from their own remount) and mounted again. Runs on the worker.
 fn remount(cwd: &std::path::Path) -> Result<std::path::PathBuf, String> {
 	let devices = mount::list()?;
 	let Some(device) = mount::device_of(&devices, cwd) else {
@@ -7359,7 +6342,6 @@ fn remount(cwd: &std::path::Path) -> Result<std::path::PathBuf, String> {
 	mount::mount(&device.id)
 }
 
-/// `G m`: where the cwd's own device is mounted (the first of its mount points).
 fn jump_to(cwd: &std::path::Path) -> Result<std::path::PathBuf, String> {
 	let devices = mount::list()?;
 	let Some(device) = mount::device_of(&devices, cwd) else {
@@ -7369,15 +6351,10 @@ fn jump_to(cwd: &std::path::Path) -> Result<std::path::PathBuf, String> {
 	device.mounts.first().cloned().ok_or_else(|| format!("{} 没有挂载点", device.label))
 }
 
-/// Whether a name answers a filter's pattern: case-insensitive substring, and an empty pattern
-/// answers everything. Pure, so the rule can be read and tested.
 pub(crate) fn matches(pattern: &str, name: &str) -> bool {
 	pattern.is_empty() || name.to_lowercase().contains(&pattern.to_lowercase())
 }
 
-/// The walk from one directory to a path — the target a relative symlink stores (P13's `(`):
-/// the common prefix drops away, a `..` a level remains, and the rest is appended. Pure, so the
-/// arithmetic can be tested.
 pub(crate) fn relative_target(from: &Path, to: &Path) -> PathBuf {
 	let from: Vec<_> = from.components().collect();
 	let to: Vec<_> = to.components().collect();
@@ -7394,8 +6371,6 @@ pub(crate) fn relative_target(from: &Path, to: &Path) -> PathBuf {
 	out
 }
 
-/// A `cd` run's path with its `~` expanded: `~` is the home itself, `~/x` is `home/x`, and a
-/// home that cannot be named leaves the path alone. Pure, so the rule can be tested.
 pub(crate) fn expand_tilde(path: &str, home: Option<PathBuf>) -> Option<PathBuf> {
 	match path {
 		"~" => home,
@@ -7406,25 +6381,15 @@ pub(crate) fn expand_tilde(path: &str, home: Option<PathBuf>) -> Option<PathBuf>
 	}
 }
 
-/// What `M`'s panel answers besides its own browsing (P21's second wave): the nine options the
-/// table lists as panel keys. Enter is the panel's own (mount, or unmount in the other mode), and
-/// these are the rest of them. Pure, so the routing can be read and tested without a window.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum DeviceDoor {
-	/// `p`: mount the standing device, and stay.
 	Mount,
-	/// `m`: mount it and go to it.
 	MountAndJump,
-	/// `R`: the device the cwd stands on, unmounted and mounted again.
 	Remount,
-	/// `u` / `U`: unmount it (and eject when it can), asking for force when the key said so.
 	Unmount {
 		force: bool,
 	},
-	/// `g`: to the mount point of the device the cwd stands on (automounting it when it can).
 	Jump,
-	/// `a` / `e` / `r`: the GVfs remote-URI family — not this window's (a toast, in the deviation
-	/// table).
 	Uri(&'static str),
 }
 
@@ -7443,8 +6408,6 @@ pub(crate) fn device_door(key: Key, shift: bool) -> Option<DeviceDoor> {
 	})
 }
 
-/// The character positions where a name holds what was typed (P21's `/`): every occurrence, folded
-/// the way ASCII folds, so the list colours exactly the letters the search is about. Pure.
 pub(crate) fn find_hits(text: &str, needle: &str) -> Vec<usize> {
 	let needle: Vec<char> = needle.chars().collect();
 	let chars: Vec<char> = text.chars().collect();
@@ -7462,8 +6425,6 @@ pub(crate) fn find_hits(text: &str, needle: &str) -> Vec<usize> {
 	hits
 }
 
-/// The view position of the next name that holds the pattern, walking from `from` (P21's `n`/`N`).
-/// Pure, so the rule can be read and tested without a window.
 pub(crate) fn find_row(view: &[usize], entries: &[Entry], pattern: &str, from: usize, forward: bool) -> Option<usize> {
 	let holds = |at: usize| {
 		view.get(at)
@@ -7478,12 +6439,6 @@ pub(crate) fn find_row(view: &[usize], entries: &[Entry], pattern: &str, from: u
 	}
 }
 
-/// The keymap rows the help panel shows, and where the standing one is: the query keeps the rows
-/// whose key, run or words hold what was typed (P21's `?` — 智能过滤). Pure, so the panel's own
-/// filtering can be read without a window.
-/// The help panel's own size (P33①): the two columns decide the width, the rows decide the height,
-/// and the height never passes seventy percent of the window — the panel is the content's box, not
-/// a slab of the screen. Pure, so the arithmetic can be read without a window.
 pub(crate) fn help_size(area: Rect, key_cells: usize, word_cells: usize, visible: usize, advance: f32, line: f32) -> (f32, f32) {
 	let width = (advance * (key_cells + word_cells) as f32 + advance * 4.0)
 		.clamp(advance * 24.0, (area.width() * 0.9).max(advance * 24.0));
@@ -7494,13 +6449,6 @@ pub(crate) fn help_size(area: Rect, key_cells: usize, word_cells: usize, visible
 	(width, height)
 }
 
-/// The rows a help query keeps (P21; P33⑨): the haystack is what the panel *shows* — the key's own
-/// spelling and the Chinese words. The `run` text is not on screen, so it is not searched: a query
-/// that could only match a run would leave a list of rows none of which says why.
-/// What the status bar's right group says (P33⑭): the filter's own prefix, the sort's word and
-/// the arrow — and nothing else. A linemode cell stood at its end once and was removed by the
-/// user's ruling; the linemode is what the rows show, not a word in the corner. Pure, so the
-/// words can be read without a window.
 pub(crate) fn right_group(sort: (SortBy, bool), symlinks: bool, filter: Option<&str>) -> String {
 	let label = match sort.0 {
 		SortBy::Name => "名称",
@@ -7522,7 +6470,6 @@ pub(crate) fn right_group(sort: (SortBy, bool), symlinks: bool, filter: Option<&
 }
 
 pub(crate) fn help_rows(rows: &[(String, String, String)], query: &str) -> Vec<usize> {
-	// a chord is said without its space: `gh` finds `g h` the way the fingers type it
 	let needle: String = query.chars().filter(|ch| !ch.is_whitespace()).collect::<String>().to_lowercase();
 
 	rows.iter()
@@ -7540,10 +6487,6 @@ pub(crate) fn help_rows(rows: &[(String, String, String)], query: &str) -> Vec<u
 		.collect()
 }
 
-/// The keys the index panel answers besides its own typing (P24): `Del` deletes the standing
-/// index and `Ctrl+S` saves the directory the window stands in — and nothing else. `F2` and
-/// `a`/`A` were doors here once; the table took them away, and this is where that is written down.
-/// Pure, so the routing can be read and tested without a window.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum IndexDoor {
 	Save,
@@ -7558,29 +6501,19 @@ pub(crate) fn index_door(key: Key, ctrl: bool) -> Option<IndexDoor> {
 	}
 }
 
-/// What the index panel's Enter does with what was typed (P22), in the table's own order: a path
-/// that is there is gone to, a path that is not there says so, and anything else is the panel's
-/// own selection. Pure, so the three priorities can be read without a window.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum QueryEnter {
-	/// ① a directory (or a file, which `go` reveals) that is there.
 	Go(PathBuf),
-	/// ② it reads like a path and is not there.
 	Missing(PathBuf),
-	/// ③ not a path at all.
 	Selection,
 }
 
-/// The rule itself: `~` is expanded, a relative path is resolved against the cwd, `.`/`..` fold
-/// without touching the filesystem, and only what *looks* like a path (`/`, `~`, or a leading `.`)
-/// is treated as one — a search word stays a search word.
 pub(crate) fn query_enter(query: &str, cwd: &Path, home: Option<PathBuf>) -> QueryEnter {
 	let typed = query.trim();
 	if typed.is_empty() || !looks_like_path(typed) {
 		return QueryEnter::Selection;
 	}
 
-	// `~` with no home to expand against is not a path this window can resolve: the row decides
 	let Some(expanded) = expand_tilde(typed, home) else {
 		return QueryEnter::Selection;
 	};
@@ -7591,14 +6524,10 @@ pub(crate) fn query_enter(query: &str, cwd: &Path, home: Option<PathBuf>) -> Que
 	if path.symlink_metadata().is_ok() { QueryEnter::Go(path) } else { QueryEnter::Missing(path) }
 }
 
-/// Whether what was typed reads as a path at all: an absolute one, a home one, or one that starts
-/// where the person stands — anything else is a word to search for.
 fn looks_like_path(typed: &str) -> bool {
 	typed.contains('/') || typed.starts_with('~') || typed.starts_with('.')
 }
 
-/// `.` and `..` folded away without asking the filesystem: a typed `..` means the parent
-/// directory, never a directory literally named `..`.
 fn folded(path: &Path) -> PathBuf {
 	use std::path::Component;
 
@@ -7618,9 +6547,6 @@ fn folded(path: &Path) -> PathBuf {
 	out
 }
 
-/// `file2` before `file10` (P13's natural sort): runs of digits compare as the numbers they
-/// spell, everything else character by character with its case folded, and a name that has run
-/// out comes first. Pure, so the rule can be read and tested.
 pub(crate) fn natural(a: &str, b: &str) -> std::cmp::Ordering {
 	use std::cmp::Ordering;
 
@@ -7649,7 +6575,6 @@ pub(crate) fn natural(a: &str, b: &str) -> std::cmp::Ordering {
 						let (left, right) = (a.next().unwrap(), b.next().unwrap());
 						left.to_lowercase().cmp(right.to_lowercase())
 					}
-					// a digit outranks a letter, the way a byte does
 					(true, false) => Ordering::Less,
 					(false, true) => Ordering::Greater,
 				};
@@ -7662,9 +6587,6 @@ pub(crate) fn natural(a: &str, b: &str) -> std::cmp::Ordering {
 	}
 }
 
-/// A name's shuffle key under `,r`: arbitrary, but the same name under the same seed always
-/// lands in the same place — a scroll must not reorder the list under the hand (a re-press picks
-/// a new seed instead). FNV-1a over the name and the seed.
 pub(crate) fn shuffle_key(name: &str, seed: u64) -> u64 {
 	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
 
@@ -7676,9 +6598,6 @@ pub(crate) fn shuffle_key(name: &str, seed: u64) -> u64 {
 	hash
 }
 
-/// The one child a bypass would descend into: the directory must show exactly one row (the
-/// hidden switch and the ordering decide what "one" means) and that row must be a directory —
-/// P13's smart enter. Pure, so the rule can be read and tested.
 pub(crate) fn bypass_child(
 	dir: &Path,
 	entries: &[Entry],
@@ -7693,8 +6612,6 @@ pub(crate) fn bypass_child(
 	entry.dir.then(|| dir.join(&entry.name))
 }
 
-/// What a symlink's own target means when it is read: an absolute target is itself, a relative
-/// one is relative to the link's directory (P13's `g f`). Pure, so the rule can be tested.
 pub(crate) fn followed(parent: &Path, target: &Path) -> PathBuf {
 	if target.is_absolute() {
 		target.to_owned()
@@ -7703,9 +6620,6 @@ pub(crate) fn followed(parent: &Path, target: &Path) -> PathBuf {
 	}
 }
 
-/// What a batch of events typed, as far as the window's fields are concerned: the layout's own
-/// text, a paste (Ctrl+V, or a middle-click's `Event::Paste`) and an input method's commit — the
-/// three ways characters reach a field (P18). Pure, so the rule can be tested without a window.
 pub(crate) fn typed_text(events: &[egui::Event]) -> String {
 	events
 		.iter()
@@ -7718,8 +6632,6 @@ pub(crate) fn typed_text(events: &[egui::Event]) -> String {
 		.collect()
 }
 
-/// `<C-a>` / `<C-r>`'s own rule, over a set of rows: `Some(true)` selects them all, `Some(false)`
-/// clears them, and `None` turns each one over — pure, so the rule can be read and tested.
 pub(crate) fn toggled(selection: &mut HashSet<PathBuf>, paths: &[PathBuf], on: Option<bool>) {
 	match on {
 		Some(true) => selection.extend(paths.iter().cloned()),
@@ -7738,9 +6650,6 @@ pub(crate) fn toggled(selection: &mut HashSet<PathBuf>, paths: &[PathBuf], on: O
 	};
 }
 
-/// The parent column's own path, and the cursor if the stack already knows it: the directory a tab
-/// stepped out of (`Some(cursor)`), or the cwd's filesystem parent (`None` — the row has to be
-/// found in the listing). Pure, so the rule can be read and tested without a window.
 fn parent_path(stack: &[View], cwd: &Path) -> Option<(PathBuf, Option<usize>)> {
 	if let Some(above) = stack.len().checked_sub(2) {
 		return Some((stack[above].path.clone(), Some(stack[above].cursor)));
@@ -7749,8 +6658,6 @@ fn parent_path(stack: &[View], cwd: &Path) -> Option<(PathBuf, Option<usize>)> {
 	Some((cwd.parent()?.to_owned(), None))
 }
 
-/// The facts a row may wear, spelled once per row (P21): the size, the two times, the permission
-/// bits the status bar already spells, and the owner's name behind its id.
 fn entry_facts(entry: &Entry) -> crate::list::Facts {
 	crate::list::Facts {
 		size:  crate::list::size(entry.size),
@@ -7761,13 +6668,10 @@ fn entry_facts(entry: &Entry) -> crate::list::Facts {
 	}
 }
 
-/// The name a directory is listed under: what a `leave` seats the cursor on when it comes back up.
 fn file_name(path: &Path) -> Option<String> {
 	path.file_name().map(|name| name.to_string_lossy().into_owned())
 }
 
-/// The metadata a preview needs for a path the window did not list: the bin's own copy of an item
-/// is exactly that (P19), and the preview asks for something to size its decode by.
 fn entry_of(path: &Path) -> Option<Entry> {
 	use std::os::unix::fs::PermissionsExt;
 
@@ -7788,8 +6692,6 @@ fn entry_of(path: &Path) -> Option<Entry> {
 	})
 }
 
-/// Which entries show, in which order: the switches and the ordering, in one place — so the rule
-/// can be read, and tested, without a window.
 pub(crate) fn ordered(entries: &[Entry], by: SortBy, reverse: bool, hidden: bool, seed: u64) -> Vec<usize> {
 	let mut view: Vec<usize> = entries
 		.iter()
@@ -7813,24 +6715,18 @@ pub(crate) fn ordered(entries: &[Entry], by: SortBy, reverse: bool, hidden: bool
 			SortBy::Random => shuffle_key(&a.name, seed).cmp(&shuffle_key(&b.name, seed)),
 		};
 
-		// directories first, the way a file manager has always done it, then the chosen order
 		b.dir.cmp(&a.dir).then_with(|| if reverse { order.reverse() } else { order })
 	});
 
 	view
 }
 
-/// The view position a click on the drawn window's `i`-th row decided, if any: a row hit seats
-/// the cursor there, and anything past the list is the blank below the rows, which decides
-/// nothing. Pure, so the rule can be read (and tested) without a window.
 pub(crate) fn clicked_row(first: usize, i: usize, len: usize) -> Option<usize> {
 	let position = first + i;
 
 	(position < len).then_some(position)
 }
 
-/// Which row the pointer is over, as a position in the view — the rule the hover state is drawn
-/// from, in one place so it can be read (and tested) without a window.
 pub(crate) fn hover_at(pointer: Option<egui::Pos2>, column: Rect, row_h: f32, from: usize) -> Option<usize> {
 	let pointer = pointer?;
 	if !column.contains(pointer) {
@@ -7848,8 +6744,6 @@ impl eframe::App for App {
 }
 
 impl App {
-	/// One frame of the window, from a `Ui` and nothing else (P25): this is what eframe's `ui`
-	/// calls, and what the headless harness calls — the same frame either way.
 	pub(crate) fn frame(&mut self, ui: &mut Ui) {
 		let ctx = ui.ctx().clone();
 		let area = ui.max_rect();
@@ -7863,12 +6757,9 @@ impl App {
 		);
 		self.body = body;
 
-		// 1. the input, decided now, on this thread: a chord's family that has waited long enough
-		// goes away before the key in this frame is read
 		self.which_expire(&ctx);
 		self.keys(&ctx);
 
-		// 2. whatever a command in flight has left, read now so its sheet lands in this frame
 		self.shell_poll(&ctx);
 		self.open_poll(&ctx);
 		self.trash_poll(&ctx);
@@ -7879,7 +6770,6 @@ impl App {
 		self.fuzzy_tick(&ctx);
 		self.preview.poll();
 
-		// every directory the window stands in is a visit, recorded once — the frecency list
 		let here = self.tab().path().to_owned();
 		if self.visited.as_deref() != Some(here.as_path()) {
 			self.visited = Some(here.clone());
@@ -7887,14 +6777,10 @@ impl App {
 			self.frecency_save();
 		}
 
-		// 3. the wheel, and the smooth scroll it feeds
 		let pointer = ctx.input(|i| i.pointer.latest_pos());
 		self.wheel(&ctx, area, pointer);
 		self.hover = pointer;
 
-		// the view that is up is the one that steps (P33③): the bin carries a scroll of its own,
-		// and a wheel'd target that nothing ever approached was a bin that never moved — and the
-		// left column steps beside the middle one (P33⑧)
 		let mut moved = if self.in_bin() {
 			self.bin_mut().is_some_and(|view| view.scroll.step(dt))
 		} else {
@@ -7907,8 +6793,6 @@ impl App {
 			ctx.request_repaint();
 		}
 
-		// 3. the picture, over the rows the switches decided — and the directories on show are
-		// watched, so another program's writes appear (P18)
 		self.refresh_view();
 		self.cache.watch(self.tab().path());
 		if let Some((parent, _)) = self.parent_view() {
@@ -7916,20 +6800,17 @@ impl App {
 		}
 		self.draw(ui, area, body);
 
-		// 4. the numbers, the replay and the shots
 		let snapshot = self.entries();
 		if !snapshot.loading && !snapshot.entries.is_empty() && !self.first {
 			self.first = true;
 			metrics::first_list();
 			self.shot_wait = Some(2);
 		}
-		if snapshot.loading {
-			// wake up when the skeleton's own moment arrives
-			if let Some(started) = snapshot.started
-				&& started.elapsed() < SKELETON_AFTER
-			{
-				ctx.request_repaint_after(SKELETON_AFTER - started.elapsed());
-			}
+		if snapshot.loading
+			&& let Some(started) = snapshot.started
+			&& started.elapsed() < SKELETON_AFTER
+		{
+			ctx.request_repaint_after(SKELETON_AFTER - started.elapsed());
 		}
 
 		self.try_reveal(&ctx);
@@ -7949,7 +6830,6 @@ impl App {
 			metrics::first_dressed();
 		}
 		if !self.dressed {
-			// the first frame is drawn: the fonts and styles can be built now, behind it
 			self.dressed = true;
 			Tokens::install(&ctx);
 			ctx.request_repaint();
@@ -7958,83 +6838,61 @@ impl App {
 		metrics::frame_edge(self.frame, false);
 	}
 
-	/// The body the last frame painted in, and the column shares it was laid out with: the harness
-	/// measures a frame's bands without guessing (P25).
-	/// Where the cursor stands, for a test that watches a replay step move it (P25).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn cursor_for_tests(&self) -> usize {
 		self.cursor()
 	}
 
-	/// How many rows are selected: the harness's own reading of the global Ctrl+A (P21).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn selected_count(&self) -> usize {
 		self.selection.len()
 	}
 
-	/// Whether the find box is open, for the harness's own reading of `/` (P26).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn find_open_for_tests(&self) -> bool {
 		self.find.is_some()
 	}
 
-	/// What the filter field holds, for the harness's own reading of a field's Ctrl+A (P21).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn filter_text(&self) -> Option<String> {
 		self.filter.as_ref().map(|edit| edit.text.clone())
 	}
 
-	/// What a fuzzy panel's box holds, if one stands open: the harness's own reading of what
-	/// Ctrl+S in the index panel is about to save.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn fuzzy_query_for_tests(&self) -> Option<String> {
 		self.fuzzy.as_ref().map(|fuzzy| fuzzy.query.text.clone())
 	}
 
-	/// Which half of a fuzzy panel holds the keyboard (P33⑬), None when none stands: the harness's
-	/// own reading of the index panel's two-stage focus.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn fuzzy_focus_for_tests(&self) -> Option<bool> {
 		self.fuzzy.as_ref().map(|fuzzy| fuzzy.focus.inside)
 	}
 
-	/// The fuzzy panel's own rows as they stand (P40's own reading): `(zone, text)` in the walked
-	/// order — what the index panel shows, zone by zone, for the tests that watch a row come and go.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn fuzzy_rows_for_tests(&self) -> Vec<(&'static str, String)> {
 		let Some(fuzzy) = &self.fuzzy else { return Vec::new() };
 		fuzzy.hits.iter().filter_map(|hit| fuzzy.items.get(hit.at)).map(|item| (item.zone, item.text.clone())).collect()
 	}
 
-	/// The sort the window runs and whether it is reversed (P33⑭'s guard: the status bar's words
-	/// changed, never the family's behaviour — the harness reads the state back).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn sort_for_tests(&self) -> (SortBy, bool) {
 		self.sort
 	}
 
-	/// The fact columns the rows carry (P33⑲'s own guard: the model changed, and the harness
-	/// reads what the keys made of it).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn columns_for_tests(&self) -> Columns {
 		self.columns
 	}
 
-	/// Whether a chord family is still open (P33④'s own guard: `t` opens one, and the assertion
-	/// that Esc closed it reads this).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn saw_sequence_for_tests(&self) -> bool {
 		self.sequence.is_some()
 	}
 
-	/// Whether the index panel is the one standing (P33⑰): what the status bar's button wears its
-	/// accent for, and what the tests read after a click.
 	pub(crate) fn index_open(&self) -> bool {
 		self.fuzzy.as_ref().is_some_and(|fuzzy| fuzzy.mode == FuzzyMode::Index)
 	}
 
-	/// Where the last frame put the strip's `+` — beside the last chip (P33⑮) — and the corner's
-	/// close (P33⑯). The harness reads the places from here.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn plus_hit_for_tests(&self) -> Option<egui::Rect> {
 		self.plus_hit
@@ -8044,66 +6902,51 @@ impl App {
 		self.close_hit
 	}
 
-	/// Where the last frame put a chip's own × (P33②): the mouse's place to press.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn tab_close_hit_for_tests(&self, tab: usize) -> Option<egui::Rect> {
 		self.tab_close_hits.iter().find(|(index, _)| *index == tab).map(|(_, rect)| *rect)
 	}
 
-	/// Where the last frame put a chip itself (P33②): where a test's pointer walks to hover it.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn tab_chip_hit_for_tests(&self, tab: usize) -> Option<egui::Rect> {
 		self.tab_chip_hits.iter().find(|(index, _)| *index == tab).map(|(_, rect)| *rect)
 	}
 
-	/// Where the last frame put the status bar's index button (P33⑰).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn status_index_hit_for_tests(&self) -> Option<egui::Rect> {
 		self.status_index
 	}
 
-	/// What is held for a paste, if anything (P33⑱'s tests read the menu's own work back).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn yank_paths_for_tests(&self) -> Vec<PathBuf> {
 		self.yank.as_ref().map(|yank| yank.paths.clone()).unwrap_or_default()
 	}
 
-	/// Whether what is held is a cut (P33⑪): `Ctrl+X`'s own flag, beside the paths.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn yank_cut_for_tests(&self) -> bool {
 		self.yank.as_ref().is_some_and(|yank| yank.cut)
 	}
 
-	/// Whether the replay's own steps have all been delivered (P33⑫'s harness waits): the last
-	/// step lands at the end of its frame, and the tests stop waiting there instead of burning
-	/// frames — a toast's own 3s run does not survive a fixed frame count on a slow machine.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn replay_done_for_tests(&self) -> bool {
 		self.seed_next >= self.seed.len()
 	}
 
-	/// The undo stack's own labels, oldest first (P33⑫'s harness reading): the depth cap and the
-	/// newest action, read without popping.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn undo_labels_for_tests(&self) -> Vec<&'static str> {
 		self.undo.iter().map(Undo::label).collect()
 	}
 
-	/// Push an undo of the test's own through the same door a change goes through (P33⑫): the
-	/// stack's depth cap is what is under test.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn note_for_tests(&mut self, undo: Undo) {
 		self.note(String::new(), undo);
 	}
 
-	/// Whether the newest toast still offers its undo (P33⑫'s button).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn toast_undo_for_tests(&self) -> bool {
 		self.toasts.newest_has_undo()
 	}
 
-	/// The applications page's own rows as it stands (P35's addendum): `(zone, id)` — the zone
-	/// header attached to the first row of each, the walked order the tests need.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn menu_app_rows_for_tests(&self) -> Vec<(Option<&'static str>, String)> {
 		self.menu
@@ -8112,130 +6955,97 @@ impl App {
 			.unwrap_or_default()
 	}
 
-	/// Where the applications page's window starts (P36②③), for the tests: the first walked row
-	/// it shows — what the wheel moves and the arrows keep in sight.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn menu_scroll_for_tests(&self) -> Option<usize> {
 		self.menu.as_ref().map(|menu| menu.scroll)
 	}
 
-	/// Which text modes stand, for the matrix that closes each of them (P35②): the in-place rename
-	/// field.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn item_rename_for_tests(&self) -> bool {
 		self.item_rename.is_some()
 	}
 
-	/// Which text modes stand, for the matrix that closes each of them (P35②): the bulk editor,
-	/// the filter strip, the find strip and the help panel.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn text_modes_for_tests(&self) -> (bool, bool, bool, bool) {
 		(self.bulk.is_some(), self.filter.is_some(), self.find.is_some(), self.help)
 	}
 
-	/// Make terminal launches dry (P35③): what `open_terminal` would have run is recorded, and
-	/// nothing is spawned — a headless test must not open a window.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn set_terminal_dry_for_tests(&mut self) {
 		self.terminal_dry = true;
 	}
 
-	/// The newest dry terminal launch (P35③): the argv and its folder, if one has arrived.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn terminal_spawn_for_tests(&mut self) -> Option<TerminalLaunch> {
 		self.terminal_log.1.try_recv().ok()
 	}
 
-	/// P37①'s own dry switch: a default open records what it would have handed the system's
-	/// opener instead of spawning `xdg-open` from a headless test.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn set_open_dry_for_tests(&mut self) {
 		self.open_dry = true;
 	}
 
-	/// The preferences the default lookup reads, for the tests (P37④): `mimeapps.list`'s stand-in,
-	/// so the assertion needs no file anywhere — the person's own is never touched.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn set_mimeapps_for_tests(&mut self, text: String) {
 		self.mimeapps_for_tests = Some(text);
 	}
 
-	/// The person's level ledger a test's window reads (P38④): a path of its own, exercised live
-	/// (mtime and all) and written by the merge, without touching any shared file.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn set_mimeapps_path_for_tests(&mut self, at: PathBuf) {
 		self.mimeapps_path_for_tests = Some(at);
 	}
 
-	/// The system level's ledger path a test's window reads (P38④): the same, one level down.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn set_mimeapps_system_path_for_tests(&mut self, at: PathBuf) {
 		self.mimeapps_system_path_for_tests = Some(at);
 	}
 
-	/// P40's own seam: the frecency store the window reads from and writes to becomes the test's
-	/// file — loaded now, from there on every visit and delete lands there.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn set_frecency_path_for_tests(&mut self, at: PathBuf) {
 		self.frecency = frecency::Frecency::load_at(&at);
 		self.frecency_path_for_tests = Some(at);
 	}
 
-	/// The preferences the window holds for a test (P38②): what `Ctrl+Enter`'s merge wrote, read
-	/// back without a file anywhere.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn mimeapps_text_for_tests(&self) -> Option<String> {
 		self.mimeapps_for_tests.clone()
 	}
 
-	/// The applications panel's own rect as last drawn (P37③/P38①): `(x, y, w, h)` — the floors'
-	/// promise, read from the rect rather than the formula.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn menu_panel_rect_for_tests(&self) -> Option<(f32, f32, f32, f32)> {
 		self.menu_panel.map(|panel| (panel.min.x, panel.min.y, panel.width(), panel.height()))
 	}
 
-	/// The path a dry default open handed over (P37①) — the harness's own reading.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn open_spawn_for_tests(&mut self) -> Option<PathBuf> {
 		self.open_log.1.try_recv().ok()
 	}
 
-	/// Turn a yank's clipboard offers off (P35④): the harness's own switch — the text road then
-	/// carries the assertions, and no test ever takes the session's real selection.
 	pub(crate) fn set_uri_offers_for_tests(&mut self, on: bool) {
 		self.uri_offers = on;
 	}
 
-	/// The middle column's scroll offset in rows, for the harness's own reading of where the rows
-	/// stand after a replay's `scroll`.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn scroll_offset_for_tests(&self) -> usize {
 		self.tab().scroll.offset.round() as usize
 	}
 
-	/// The left column's own seat and scroll (P33⑧): `(seat, offset, rows, len)` — what a click
-	/// and a wheel did over the parent column.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn parent_mouse_for_tests(&self) -> (Option<usize>, f32, usize, usize) {
 		let parent = &self.tab().parent;
 		(parent.seat, parent.scroll.offset, parent.scroll.rows, parent.scroll.len)
 	}
 
-	/// The directory the window stands in.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn cwd_for_tests(&self) -> PathBuf {
 		self.tab().path().to_owned()
 	}
 
-	/// Hold a selection, for the tests that need one before a right click. `Space` is the factory
-/// door now (P33⑩), and this is the door for a test that wants the state without the steps.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn hold_selection_for_tests(&mut self, paths: Vec<PathBuf>) {
 		self.selection = paths.into_iter().collect();
 	}
 
-	/// The selection, sorted, for the harness's own reading of `Space` and Escape (P33⑩).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn selection_for_tests(&self) -> Vec<PathBuf> {
 		let mut paths: Vec<PathBuf> = self.selection.iter().cloned().collect();
@@ -8243,46 +7053,36 @@ impl App {
 		paths
 	}
 
-	/// The index's own entries' paths, in the order they were saved.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn bookmarked_paths(&self) -> Vec<PathBuf> {
 		self.bookmarks.entries.iter().map(|entry| entry.path.clone()).collect()
 	}
 
-	/// How many rows the view holds: the test side's own reading of "the listing has landed" (P25's
-	/// flake fix — a replay step must never be fed into a list that is still being read).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn listed(&self) -> usize {
 		self.tab().view.len()
 	}
 
-	/// Whether the tab on screen is the bin's own (P27), for the harness's own reading of `g t`.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn in_bin_for_tests(&self) -> bool {
 		self.in_bin()
 	}
 
-	/// How many tabs are open, for the harness's own reading of a new one (P27).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn tabs_for_tests(&self) -> usize {
 		self.tabs.len()
 	}
 
-	/// What a chip says, for the harness's own reading of the bin's title (P27).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn tab_name_for_tests(&self, at: usize) -> String {
 		self.tabs[at].name()
 	}
 
-	/// Where the bin's own cursor stands (P27), for a replay step that walks it.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn bin_cursor_for_tests(&self) -> Option<usize> {
 		self.bin().map(|view| view.cursor)
 	}
 
-	/// A bin list of the harness's own (P33③): what is under test is the scroll's accounting, and
-	/// the real bin is not a thing a test may fill. The tab opens the way `g t` opens it; this
-	/// hands the list over whole and drops any read still in flight with it.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn bin_fill_for_tests(&mut self, count: usize) {
 		self.trash_job = None;
@@ -8300,16 +7100,11 @@ impl App {
 		view.loading = false;
 	}
 
-	/// The bin's scroll as the last frame left it (P33③'s accounting): the offset it draws from,
-	/// the target it is walking to, and the row counts the clamp is made of — `(offset, target,
-	/// rows, len)`.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn bin_scroll_for_tests(&self) -> Option<(f32, f32, usize, usize)> {
 		self.bin().map(|view| (view.scroll.offset, view.scroll.target, view.scroll.rows, view.scroll.len))
 	}
 
-	/// Put a replay in the app's hands *now*, timer restarted (P25's flake fix): a test waits for
-	/// the listing and only then hands the keys over, so `key j` cannot land on an empty list.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn rehearse(&mut self, steps: Vec<String>) {
 		self.seed = steps;
@@ -8321,21 +7116,16 @@ impl App {
 		(self.body, self.shares)
 	}
 
-	/// Where the preview's own scroll stands, when a picture is on screen (P27①): the harness's
-	/// reading for the scroll-and-clip test.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn preview_offset_for_tests(&self) -> Option<f32> {
 		self.preview.image_offset_for_tests()
 	}
 
-	/// A textual preview's own scroll (P37⑤): `(content, offset, view)` — `None` when there is
-	/// nothing to walk. The harness's reading for the document scroll regression.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn preview_extent_for_tests(&self) -> Option<(f32, f32, f32)> {
 		self.preview.extent()
 	}
 
-	/// The menu's own page and row count (P31), for the harness's walk of its pages.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn menu_state_for_tests(&self) -> Option<(&'static str, usize)> {
 		self.menu.as_ref().map(|menu| {
@@ -8347,39 +7137,31 @@ impl App {
 		})
 	}
 
-	/// The newest toast's own words, for the harness's test of P30's failure visibility.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn toast_text_for_tests(&self) -> Option<String> {
 		self.toasts.items().last().map(|toast| toast.text.clone())
 	}
 
-	/// The toasts' own widths as last drawn (P42②): `(rect, text)` per seat, oldest first.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn toast_widths_for_tests(&self) -> Vec<(f32, f32)> {
 		self.toast_widths.clone()
 	}
 
-	/// The failure a refusing launcher would send, for the harness's own test of P30's failure.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn open_failed_for_tests(&self, path: PathBuf) {
 		let _ = self.open_failed.0.send(path);
 	}
 
-	/// The label the picture's badge shows (P28①), for the harness's own reading of a zoom.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn preview_badge_for_tests(&self) -> Option<String> {
 		self.preview.badge_for_tests().map(str::to_owned)
 	}
 
-	/// How many rows the archive tree shows (P28's long tail): the harness's own reading for the
-	/// fold test — `None` while the preview is not an archive.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn preview_archive_rows_for_tests(&self) -> Option<usize> {
 		self.preview.archive_rows_for_tests()
 	}
 
-	/// The archive tree's rows as the pointer sees them (P28's long tail): where each stands, and
-	/// whether it is a folder — the harness puts its pointer on one of them.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn preview_archive_tree_for_tests(&self) -> Option<Vec<(usize, egui::Rect, bool)>> {
 		let column = chrome::columns(self.body, self.shares).preview?;
@@ -8406,8 +7188,6 @@ mod order_tests {
 		}
 	}
 
-	/// `,b` / `,B` (P21): the creation time orders the list where the filesystem carries one, and a
-	/// file without a creation time sorts before the ones that have it.
 	#[test]
 	fn the_creation_time_can_order_the_list() {
 		let mut older = entry("older.txt", 1, false, 0);
@@ -8425,8 +7205,6 @@ mod order_tests {
 		assert_eq!(names, vec![ "newer.txt".to_owned(), "older.txt".to_owned(), "unknown.txt".to_owned() ], "and turned over: newest first");
 	}
 
-	/// The view is the rule the switches express: hidden files by their name, directories first, and
-	/// the ordering the keymap asked for.
 	#[test]
 	fn the_view_hides_and_orders_the_way_the_switches_say() {
 		let entries = vec![
@@ -8465,8 +7243,6 @@ mod order_tests {
 mod index_tests {
 	use super::*;
 
-	/// The index panel's three zones: bookmarks first (a broken one listed and flagged), then the
-	/// high scores, then the recent visits — and a path already said once is not said twice.
 	#[test]
 	fn the_index_gathers_three_zones_without_repeating_itself() {
 		let books = vec![
@@ -8505,7 +7281,6 @@ mod index_tests {
 mod filter_tests {
 	use super::*;
 
-	/// The pattern is a case-insensitive substring, and an empty one answers everything.
 	#[test]
 	fn a_filter_is_a_case_insensitive_substring() {
 		assert!(matches("re", "Report-Final.pdf"));
@@ -8520,8 +7295,6 @@ mod filter_tests {
 mod link_tests {
 	use super::*;
 
-	/// The relative symlink's own arithmetic: the common prefix drops away, levels become `..`,
-	/// and the walk lands exactly on the target.
 	#[test]
 	fn a_relative_target_walks_from_the_links_own_directory() {
 		assert_eq!(relative_target(Path::new("/a/x"), Path::new("/a/b/c")), PathBuf::from("../b/c"));
@@ -8529,7 +7302,6 @@ mod link_tests {
 		assert_eq!(relative_target(Path::new("/a/b/c/d"), Path::new("/a/b")), PathBuf::from("../.."));
 		assert_eq!(relative_target(Path::new("/a/b"), Path::new("/a/b")), PathBuf::from(""));
 
-		// and the walk is its own inverse check: from the link's directory it lands back on `to`
 		let joint = Path::new("/a/b").join(relative_target(Path::new("/a/b"), Path::new("/a/c/d")));
 		assert_eq!(joint, PathBuf::from("/a/b/../c/d"));
 	}
@@ -8547,8 +7319,6 @@ mod sort_tests {
 		view.iter().map(|i| entries[*i].name.clone()).collect()
 	}
 
-	/// The natural sort reads numbers inside names as numbers: `file2` before `file10`, `a1b2`
-	/// before `a1b10` — the order a person's eye reads, not the byte order's.
 	#[test]
 	fn the_natural_order_counts_the_way_a_person_counts() {
 		assert!(natural("file2", "file10") == std::cmp::Ordering::Less);
@@ -8569,8 +7339,6 @@ mod sort_tests {
 		);
 	}
 
-	/// The random sort is arbitrary but not fickle: one seed, one order — however often the list
-	/// is rebuilt — and another seed is another draw.
 	#[test]
 	fn the_random_order_is_stable_for_a_seed_and_a_permutation_always() {
 		let entries: Vec<Entry> = [ "a", "b", "c", "d", "e", "f", "g", "h" ].iter().map(|n| entry(n)).collect();
@@ -8592,10 +7360,6 @@ mod sort_tests {
 mod query_tests {
 	use super::*;
 
-	/// The index panel's Enter reads what was typed first (P22), in the table's own order: a path
-	/// that is there wins over the row, a path that is not there says so, and anything else is the
-	/// panel's own jump. `~` expands, a relative path resolves against the cwd, and `.`/`..` fold
-	/// without the filesystem being asked.
 	#[test]
 	fn the_query_reads_as_a_path_before_it_reads_as_a_search() {
 		let dir = std::env::temp_dir().join(format!("crabhop-query-{}", std::process::id()));
@@ -8606,7 +7370,6 @@ mod query_tests {
 		let cwd = dir.clone();
 		let home = || Some(dir.clone());
 
-		// ① a path that exists — absolute, home-relative, cwd-relative, with `..` folded
 		assert_eq!(
 			query_enter(dir.join("sub").to_str().expect("utf-8"), &cwd, home()),
 			QueryEnter::Go(dir.join("sub"))
@@ -8624,7 +7387,6 @@ mod query_tests {
 		);
 		assert_eq!(query_enter("./a.txt", &cwd, home()), QueryEnter::Go(dir.join("a.txt")), "a file is gone to as well: `go` reveals it");
 
-		// ② it reads like a path and is not there
 		assert_eq!(query_enter("/nowhere/at/all", &cwd, home()), QueryEnter::Missing(PathBuf::from("/nowhere/at/all")));
 		assert_eq!(query_enter("./missing", &cwd, home()), QueryEnter::Missing(cwd.join("missing")));
 		assert_eq!(query_enter("~/nowhere", &cwd, home()), QueryEnter::Missing(dir.join("nowhere")));
@@ -8634,7 +7396,6 @@ mod query_tests {
 			"a name that is not there under a directory that is"
 		);
 
-		// ③ not a path at all: the row decides
 		assert_eq!(query_enter("paper", &cwd, home()), QueryEnter::Selection);
 		assert_eq!(query_enter("sub", &cwd, home()), QueryEnter::Selection, "a bare name is a search word, not a path");
 		assert_eq!(query_enter("", &cwd, home()), QueryEnter::Selection);
@@ -8646,14 +7407,11 @@ mod query_tests {
 			"another user's home is a path we cannot resolve — and it is not there"
 		);
 
-		// and the words are trimmed before they are read
 		assert_eq!(query_enter("  ~/sub  ", &cwd, home()), QueryEnter::Go(dir.join("sub")));
 
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// The index panel's keys are the table's own (P24): `Del` deletes and `Ctrl+S` saves the
-	/// directory the window stands in — `F2`, `a` and `A` have no door here any more.
 	#[test]
 	fn the_index_panels_doors_are_delete_and_save_only() {
 		assert_eq!(index_door(Key::Delete, false), Some(IndexDoor::Delete), "Del deletes");
@@ -8665,8 +7423,6 @@ mod query_tests {
 		assert_eq!(index_door(Key::Enter, false), None, "Enter is the panel's own, not a door here");
 	}
 
-	/// `/`'s own two rules (P21): the letters a name holds are found case-folded and all of them,
-	/// and the arrows walk the view to the next name with them.
 	#[test]
 	fn the_find_finds_letters_and_the_row_that_holds_them() {
 		assert_eq!(find_hits("Readme.md", "me"), vec![ 4, 5 ], "the letters' own positions");
@@ -8699,11 +7455,6 @@ mod query_tests {
 		assert_eq!(find_row(&view, &entries, "nothing", 0, true), None);
 	}
 
-	/// The focus machine both panels share (P33⑬): the list has the keyboard when a panel opens,
-	/// `f` (the help panel's door) or a click on the box moves it inside, and the first Esc steps
-	/// back out — the second is the panel's own to close.
-	/// The status bar's right group (P33⑭): the filter's prefix, the sort's word — mtime in
-	/// Chinese — and the arrow, and never a linemode word any more.
 	#[test]
 	fn the_status_bar_says_the_sort_and_never_the_linemode() {
 		let mtime = right_group((SortBy::Mtime, false), false, None);
@@ -8716,9 +7467,6 @@ mod query_tests {
 
 	#[test]
 	fn a_panel_focus_steps_in_on_f_and_out_on_the_first_escape() {
-		// the machine both panels share (P33⑬): the list has the keyboard when the panel opens,
-		// `f` (or a click on the box) moves it inside, and the first Esc steps back out — the
-		// second is the panel's own to close
 		let mut focus = PanelFocus::default();
 		assert!(!focus.inside, "a panel opens on its list");
 		focus.enter();
@@ -8728,10 +7476,6 @@ mod query_tests {
 		assert!(!focus.escape(), "the second Esc says the panel itself may close");
 	}
 
-	/// The help panel's rows are the keymap's own, filtered by what was typed (P21's `?`): an empty
-	/// query keeps them all, a word keeps the rows whose key or words hold it, and nonsense keeps
-	/// none. Its `#[test]` had gone missing (the attribute above was the focus machine's own): it
-	/// runs again.
 	#[test]
 	fn the_help_filters_its_own_rows() {
 		let rows = vec![
@@ -8741,8 +7485,6 @@ mod query_tests {
 			(", b".to_owned(), "sort btime --reverse=no".to_owned(), "按创建时间正序".to_owned()),
 		];
 
-		// the panel's own size (P33①): the columns say the width, the rows the height, and the
-		// height never passes seventy percent of the window
 		let area = Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(1200.0, 800.0));
 		let (narrow, short) = help_size(area, 4, 8, 3, 9.0, 24.0);
 		let (wide, tall) = help_size(area, 12, 30, 200, 9.0, 24.0);
@@ -8762,9 +7504,6 @@ mod query_tests {
 		assert!(help_rows(&rows, "没有这一条").is_empty(), "nonsense keeps none");
 	}
 
-	/// `M`'s panel answers the nine options the table lists (P21): `p` mounts, `m` mounts and goes,
-	/// `R` remounts the cwd's device, `u`/`U` unmount (force on the shifted one), `g` jumps, and
-	/// `a`/`e`/`r` are the URI family — while a letter that is not one of them is left to typing.
 	#[test]
 	fn the_device_panels_doors_read_their_keys() {
 		assert_eq!(device_door(Key::P, false), Some(DeviceDoor::Mount));
@@ -8780,8 +7519,6 @@ mod query_tests {
 		assert_eq!(device_door(Key::P, true), None, "and the shifted one is not the option");
 	}
 
-	/// The footer's words are the terminal ones (P24): the four keys, and the box's own path rule
-	/// under them — the `A 添加该目录索引` wording is gone.
 	#[test]
 	fn the_index_footers_words_are_the_final_ones() {
 		assert_eq!(INDEX_HINT, "Enter 跳转 · Ctrl+S 保存目录为索引 · Del 删除所选 · i 再按跳输入框 · Esc 退出");
@@ -8794,8 +7531,6 @@ mod query_tests {
 mod cd_tests {
 	use super::*;
 
-	/// `~` and `~/x` expand against the home; a plain path is itself; and a missing home is not a
-	/// path at all.
 	#[test]
 	fn the_tilde_expands_the_way_a_shell_expands_it() {
 		let home = || Some(PathBuf::from("/home/x"));
@@ -8815,8 +7550,6 @@ mod bypass_tests {
 		Entry { name: name.to_owned(), size: 0, modified: None, dir, mode: None, link: false , created: None, uid: 0 }
 	}
 
-	/// The bypass walks a single-child chain and nothing else: a second row stops it, a file
-	/// stops it, and the hidden switch decides what "a single child" means.
 	#[test]
 	fn the_bypass_descends_only_a_single_child_chain() {
 		let dir = Path::new("/a");
@@ -8843,8 +7576,6 @@ mod bypass_tests {
 mod follow_tests {
 	use super::*;
 
-	/// A symlink's target is read the way the kernel reads it: an absolute one stands alone, a
-	/// relative one is relative to the link's own directory.
 	#[test]
 	fn a_symlinks_target_is_resolved_against_its_own_directory() {
 		assert_eq!(followed(Path::new("/a/b"), Path::new("/etc/hosts")), PathBuf::from("/etc/hosts"));
@@ -8857,8 +7588,6 @@ mod follow_tests {
 mod history_tests {
 	use super::*;
 
-	/// The trail `H`/`L` walk: arrivals are kept, a new arrival after going back cuts the future
-	/// away, and travel only moves where there is somewhere to go.
 	#[test]
 	fn the_trail_keeps_arrivals_and_cuts_the_future() {
 		let mut history = Trail::default();
@@ -8872,13 +7601,11 @@ mod history_tests {
 		assert_eq!(history.travel(true), None, "the trail's start is the end of the walk");
 		assert_eq!(history.travel(false).as_deref(), Some(Path::new("/b")), "and forward walks it again");
 
-		// a new arrival from the middle: /c is a future that no longer exists
 		history.push(Path::new("/d"));
 		assert_eq!(history.at(), 2);
 		assert_eq!(history.travel(false), None, "nothing after /d");
 		assert_eq!(history.travel(true).as_deref(), Some(Path::new("/b")));
 
-		// arriving where it already stands is not a new step
 		history.push(Path::new("/b"));
 		assert_eq!(history.travel(true).as_deref(), Some(Path::new("/a")));
 	}
@@ -8888,8 +7615,6 @@ mod history_tests {
 mod selection_tests {
 	use super::*;
 
-	/// `<C-a>` selects every row on show, `<C-r>` turns the selection over, and `--state=off`
-	/// clears — over the view's own rows, so nothing outside the list is touched.
 	#[test]
 	fn select_all_invert_and_clear_act_on_the_rows_they_are_given() {
 		let rows: Vec<PathBuf> = [ "/a", "/b", "/c" ].iter().map(PathBuf::from).collect();
@@ -8916,8 +7641,6 @@ mod selection_tests {
 mod typed_tests {
 	use super::*;
 
-	/// The three ways characters reach a field (P18): the layout's own text, a paste, and an
-	/// input method's commit. A keystroke that typed nothing contributes nothing.
 	#[test]
 	fn typing_pasting_and_an_input_method_all_count_as_text() {
 		let events = vec![
@@ -8946,9 +7669,6 @@ mod typed_tests {
 mod facts_tests {
 	use super::*;
 
-	/// The P12 rule, pinned at the row's own content: only the middle column's rows carry the
-	/// size and time — the parent column and the preview's listing ask for none, so a narrow
-	/// window has nothing to squeeze together.
 	#[test]
 	fn only_the_middle_column_shows_the_facts() {
 		let advance = FONT_SIZE * 0.62;
@@ -8984,8 +7704,6 @@ mod facts_tests {
 mod click_tests {
 	use super::*;
 
-	/// The click's own rule: a hit row is a view position, the blank below the rows is nothing —
-	/// and it is a *view* position even when the list is scrolled.
 	#[test]
 	fn a_click_seats_the_row_it_hit_and_only_that_row() {
 		assert_eq!(clicked_row(0, 0, 60), Some(0));
@@ -9003,8 +7721,6 @@ mod parent_tests {
 
 	fn view(path: &str) -> View { View { path: PathBuf::from(path), cursor: 3 } }
 
-	/// The parent column always has a path: the stack's own step when there is one, the cwd's
-	/// filesystem parent otherwise — `None` only for the root, which has no parent to list.
 	#[test]
 	fn the_parent_column_finds_a_parent_under_any_cwd() {
 		let stack = [ view("/home/x"), view("/home/x/Downloads") ];
@@ -9028,9 +7744,6 @@ mod parent_tests {
 		);
 	}
 
-	/// A `g a` / `g d` jump resets the stack to a single view, and `h` still has a directory to
-	/// leave to: the parent column's own, which is the cwd's filesystem parent (P18 — `h` is never
-	/// a no-op). The name is what the cursor seats itself on: the directory it came out of.
 	#[test]
 	fn a_jump_that_resets_the_stack_still_leaves_somewhere_to_go() {
 		let jumped = [ view("/home/x/Desktop") ];
@@ -9049,8 +7762,6 @@ mod parent_tests {
 mod hover_tests {
 	use super::*;
 
-	/// The pointer's row is the row under it, and nothing else: above the column, below it or beside
-	/// it are not rows, and the row that is found is a position in the view.
 	#[test]
 	fn the_hover_row_is_the_row_under_the_pointer() {
 		let column = Rect::from_min_size(egui::pos2(100.0, 10.0), Vec2::new(300.0, 320.0));
@@ -9069,7 +7780,6 @@ mod hover_tests {
 mod tab_tests {
 	use super::*;
 
-	/// Switching tabs: a number clamps to the tabs that exist, a relative step wraps around them.
 	#[test]
 	fn a_switch_clamps_an_index_and_wraps_a_step() {
 		assert_eq!(switch_target(5, 2, 0, false), 0, "1 goes to the first tab");
@@ -9079,8 +7789,6 @@ mod tab_tests {
 		assert_eq!(switch_target(1, 0, 1, true), 0, "one tab is still one tab");
 	}
 
-	/// The chip's number badge: it takes its own room, and past nine it is the number it is —
-	/// a tenth tab's badge is a digit wider, not a clamped "9".
 	#[test]
 	fn a_chips_number_takes_room_and_grows_past_nine() {
 		assert!(number_width(0) > 0.0, "the badge takes room");
@@ -9089,7 +7797,6 @@ mod tab_tests {
 		assert!(number_width(99) > number_width(9), "and the hundredth, three");
 	}
 
-	/// A tab says its directory's name until the person gives it one of their own.
 	#[test]
 	fn a_tab_is_named_by_its_directory_or_by_hand() {
 		let mut tab = Tab::at(PathBuf::from("/home/someone/Downloads"));
@@ -9098,7 +7805,6 @@ mod tab_tests {
 		assert_eq!(tab.name(), "下好的东西");
 	}
 
-	/// The bin's own tab says 回收站 — and a name the person typed still wins (P27).
 	#[test]
 	fn a_bin_tab_is_named_by_the_bin() {
 		let mut tab = Tab::at(PathBuf::from("/home/someone/Downloads"));

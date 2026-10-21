@@ -1,6 +1,3 @@
-//! The bulk editor's plan (§4.1): what a column of names means before anything is written — the
-//! lines that will be created, the ones the disk already carries, and the ones a later line
-//! repeats. The window only draws this; the plan is decided here, where it can be tested.
 
 use std::path::{Path, PathBuf};
 
@@ -12,29 +9,20 @@ pub(crate) enum Kind {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Fate {
-	/// Will be written.
 	Create,
-	/// Already on disk: skipped, and said so in `err`.
 	Exists,
-	/// A later line names the same target, and the last one wins: this one is skipped, in `warn`.
 	Repeat,
-	/// Not a relative name at all: skipped.
 	Invalid,
 }
 
 #[derive(Clone)]
 pub(crate) struct Line {
-	/// The line as typed, trimmed — what the preview reads out.
 	pub(crate) text:   String,
-	/// Where it would land, when it can at all.
 	pub(crate) target: Option<PathBuf>,
 	pub(crate) kind:   Kind,
 	pub(crate) fate:   Fate,
 }
 
-/// What the editor's text means, read against the directory it would write into. A line ending in
-/// `/` is a directory; a path with parents is fine — the commit makes them. An absolute line is
-/// refused: this editor writes inside the current directory, like the keymap says.
 pub(crate) fn parse(text: &str, dir: &Path) -> Vec<Line> {
 	let mut lines: Vec<Line> = text
 		.lines()
@@ -61,7 +49,6 @@ pub(crate) fn parse(text: &str, dir: &Path) -> Vec<Line> {
 		})
 		.collect();
 
-	// the last line naming a target is the one that writes it; the ones before are repeats
 	for at in 0..lines.len() {
 		let Some(target) = lines[at].target.clone() else { continue };
 		if lines[at + 1..].iter().any(|later| later.target.as_deref() == Some(target.as_path())) {
@@ -72,22 +59,17 @@ pub(crate) fn parse(text: &str, dir: &Path) -> Vec<Line> {
 	lines
 }
 
-/// How many lines would be written and how many are skipped — the button's own words, and the
-/// only tally either the preview or the commit uses.
 pub(crate) fn tally(lines: &[Line]) -> (usize, usize) {
 	let create = lines.iter().filter(|line| line.fate == Fate::Create).count();
 	(create, lines.len() - create)
 }
 
-/// What a commit did: how many landed, and the lines that did not, with the reason.
 #[derive(Default)]
 pub(crate) struct Report {
 	pub(crate) created:  usize,
 	pub(crate) failures: Vec<(String, String)>,
 }
 
-/// Write the plan: directories with their parents (the upstream semantics), files with their
-/// parents made first and the file created new — never overwriting what exists.
 pub(crate) fn commit(lines: &[Line]) -> Report {
 	let mut report = Report::default();
 
@@ -123,8 +105,6 @@ mod tests {
 		dir
 	}
 
-	/// A line's own reading: the slash makes a directory, a line already on disk is a conflict, and
-	/// an empty or absolute line is refused.
 	#[test]
 	fn a_line_reads_as_a_target_and_a_fate() {
 		let dir = scratch("read");
@@ -141,8 +121,6 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// A repeated name keeps its last line: the earlier ones are marked and skipped, the last is
-	/// the one the commit would write.
 	#[test]
 	fn a_repeated_name_keeps_its_last_line() {
 		let dir = scratch("repeat");
@@ -156,8 +134,6 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// The commit makes parents for both kinds, a new file never overwrites, and every failure
-	/// comes back with its line and its reason.
 	#[test]
 	fn the_commit_writes_the_plan_and_reports_the_rest() {
 		let dir = scratch("commit");
@@ -169,7 +145,6 @@ mod tests {
 		assert!(dir.join("docs").is_dir());
 		assert_eq!(std::fs::read(dir.join("nested/readme.md")).expect("the file"), b"");
 
-		// a name that appeared between the plan and the commit is not overwritten: made by hand
 		std::fs::write(dir.join("later.txt"), b"keep").expect("a file");
 		let lines = parse("later.txt\n", &dir);
 		assert_eq!(lines[0].fate, Fate::Exists, "the plan itself refuses it");
@@ -177,7 +152,6 @@ mod tests {
 		assert_eq!(report.created, 0);
 		assert_eq!(std::fs::read(dir.join("later.txt")).expect("still there"), b"keep");
 
-		// a file where a parent should be: the failure is the line's own
 		std::fs::write(dir.join("blocker"), b"x").expect("a file");
 		let lines = parse("blocker/child.txt\n", &dir);
 		let report = commit(&lines);

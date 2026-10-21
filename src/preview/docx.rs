@@ -1,7 +1,3 @@
-//! `word/document.xml` as plain text: what a preview needs, and nothing else.
-//!
-//! Moved here from the legacy window whole: the extraction was
-//! verified there, and a preview's job is structure, not typographic fidelity (§3.6).
 
 use std::io::{BufReader, Cursor};
 
@@ -10,9 +6,6 @@ use quick_xml::{Reader, events::Event};
 pub(crate) struct Docx;
 
 impl Docx {
-	/// Where the preview stops: this many paragraphs, or this many bytes, whichever comes first.
-	/// The byte cap is the memory bound (one preview is held at a time), and it is generous on
-	/// purpose — a book chapter should not lose its second half to a cap.
 	const MAX_PARAGRAPHS: usize = 1200;
 	const MAX_BYTES: usize = 256 * 1024;
 
@@ -35,7 +28,6 @@ impl Docx {
 					false
 				}
 				Ok(Event::Empty(e)) => {
-					// an empty element has no end tag to close it, but it is not the end of the part
 					state.open(e.local_name().into_inner());
 					false
 				}
@@ -45,7 +37,6 @@ impl Docx {
 				}
 				Ok(Event::End(e)) => state.close(e.local_name().into_inner(), &mut paragraph, &mut out),
 				Ok(Event::Eof) => true,
-				// a truncated or malformed part still previews as far as it got
 				Err(_) => true,
 				_ => false,
 			};
@@ -61,16 +52,11 @@ impl Docx {
 	}
 }
 
-/// The little bit of document structure the extraction cares about.
 #[derive(Default)]
 struct State {
-	/// Inside a `w:t`, so text is worth collecting.
 	text:       bool,
-	/// Inside a `w:instrText` or `w:delText`, whose content is not worth showing.
 	skipped:    usize,
-	/// Inside a `w:tc`, where paragraphs are cells of one line rather than lines of their own.
 	cell:       usize,
-	/// The paragraph carries `w:numPr`, so it is a list item.
 	bullet:     bool,
 	paragraphs: usize,
 }
@@ -86,7 +72,6 @@ impl State {
 		}
 	}
 
-	/// Returns true when there is nothing left to read in this part.
 	fn close(&mut self, name: &str, paragraph: &mut String, out: &mut String) -> bool {
 		match name {
 			"t" => self.text = false,
@@ -98,7 +83,6 @@ impl State {
 						out.push_str("• ");
 					}
 					out.push_str(text);
-					// a cell joins its paragraphs into one line; the table row ends the line
 					out.push(if self.cell > 0 { ' ' } else { '\n' });
 				}
 
@@ -106,8 +90,6 @@ impl State {
 				self.bullet = false;
 				self.paragraphs += 1;
 			}
-			// a cell separator the preview can actually draw: a tab is a control character, and it
-			// reaches neither the width maths nor the painter
 			"tc" => out.push(' '),
 			"tr" => out.push('\n'),
 			_ => {}
@@ -123,8 +105,6 @@ mod tests {
 
 	use super::*;
 
-	/// A minimal `docx` built with the same crate that reads it: two paragraphs (one a list item), a
-	/// table, a field instruction and a deletion that must not show up.
 	fn fixture(document: &str) -> Vec<u8> {
 		let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
 		let options: zip::write::FileOptions<'_, ()> =

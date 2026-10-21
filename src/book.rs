@@ -1,6 +1,3 @@
-//! The bookmarks (§5.1–§5.3), natively — whoosh's job without a plugin: a key, a name and a
-//! path, in `$XDG_DATA_HOME/crabhop/bookmarks.toml`. A key is assigned automatically and can be
-//! changed by hand in the file; a temp bookmark lives only in this run.
 
 use std::path::{Path, PathBuf};
 
@@ -10,8 +7,6 @@ use crate::config::Config;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Bookmark {
-	/// The entry's own name: what the index panel lists, renames and deletes by (P14's
-	/// re-decision — no more keys, no more temp marks).
 	pub name: String,
 	pub path: PathBuf,
 }
@@ -43,8 +38,6 @@ impl Bookmarks {
 		}
 	}
 
-	/// Index a path (P14's re-decision): its own name is the entry's identity, and a path
-	/// already indexed is returned as it stands rather than added twice.
 	pub(crate) fn add(&mut self, path: PathBuf) -> Bookmark {
 		if let Some(known) = self.entries.iter().find(|entry| entry.path == path) {
 			return known.clone();
@@ -56,7 +49,6 @@ impl Bookmarks {
 		bookmark
 	}
 
-	/// An undo of a delete puts the bookmark back as it was.
 	pub(crate) fn put(&mut self, bookmark: Bookmark) {
 		self.entries.push(bookmark);
 	}
@@ -72,8 +64,6 @@ impl Bookmarks {
 
 }
 
-/// What a bookmark is called until someone renames it: the item's own name, or the path itself
-/// when it has no name to take.
 pub(crate) fn name_of(path: &Path) -> String {
 	path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned())
 }
@@ -82,8 +72,6 @@ pub(crate) fn name_of(path: &Path) -> String {
 mod tests {
 	use super::*;
 
-	/// Indexing is by path: the entry takes the item's own name, an old entry comes back when the
-	/// path is already indexed (never a duplicate), and removal and rename work by that name.
 	#[test]
 	fn indexing_is_by_path_and_identity_is_the_name() {
 		let mut books = Bookmarks::default();
@@ -104,7 +92,6 @@ mod tests {
 		assert_eq!(books.entries.len(), 1);
 	}
 
-	/// The file round trips without any keys: what is saved is what is read back.
 	#[test]
 	fn the_file_round_trips() {
 		let mut books = Bookmarks::default();
@@ -118,7 +105,6 @@ mod tests {
 		assert_eq!(back.entries[1].name, "tmp");
 	}
 
-	/// A path with no name of its own reads as the path itself.
 	#[test]
 	fn a_name_comes_from_the_item_or_the_path() {
 		assert_eq!(name_of(Path::new("/home/x/dev")), "dev");

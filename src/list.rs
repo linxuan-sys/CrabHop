@@ -1,5 +1,3 @@
-//! The rows: an icon, a name, and the facts about it — and how much of a name fits into a column
-//! without ever cutting a wide glyph in half.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,8 +7,6 @@ use crate::folder::Entry;
 use crate::keys::{Columns, TimeCol};
 use crate::tokens::{FONT_SMALL, ICON_BOX, Tokens};
 
-/// The width of a character in cells: a full-width glyph takes two, everything else one. This is
-/// the rule the clipping below stands on — a name is cut between cells, never inside one.
 pub(crate) fn cell_width(c: char) -> u32 {
 	let c = c as u32;
 
@@ -22,8 +18,6 @@ pub(crate) fn cell_width(c: char) -> u32 {
 	}
 }
 
-/// As much of a name as `cells` cells hold. The slice always ends on a character boundary, and a
-/// two-cell glyph is taken whole or left out.
 pub(crate) fn clipped(name: &str, cells: u32) -> &str {
 	let mut used = 0;
 
@@ -38,17 +32,11 @@ pub(crate) fn clipped(name: &str, cells: u32) -> &str {
 	name
 }
 
-/// A file's icon and the colour of it. A small table on purpose: the kinds a person can tell apart
-/// at a glance, not every extension the internet has.
 pub(crate) fn icon(entry: &Entry, tokens: &Tokens) -> (&'static str, Color32) {
 	icon_for(&entry.name, entry.dir, entry.mode.is_some_and(|mode| mode & 0o111 != 0), tokens)
 }
 
-/// The same table, for a caller that has a name and no `Entry` — the preview's placeholder, which
-/// asks whether the path is executable and passes the answer in.
 pub(crate) fn icon_for(name: &str, dir: bool, exec: bool, tokens: &Tokens) -> (&'static str, Color32) {
-	// P34: yazi's own table first — the name, then the extension; a directory's own name before
-	// the generic folder. What the table does not name keeps the rules below (and the generic face)
 	if let Some((glyph, colour)) = crate::icons::lookup(name, dir) {
 		return (glyph, colour);
 	}
@@ -58,9 +46,6 @@ pub(crate) fn icon_for(name: &str, dir: bool, exec: bool, tokens: &Tokens) -> (&
 
 	let ext = name.rsplit('.').next().unwrap_or_default().to_lowercase();
 
-	// the filetype rules the design's §3.7 names — images, media, archives, documents, executables
-	// — with the baseline's own Catppuccin mapping behind them (`crabhop/src/gui/tokens.rs` of the old tree, the
-	// place the design defers to). Anything the rules do not name keeps the plain file's face.
 	let colour = match ext.as_str() {
 		"png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "tif" | "tiff" | "avif" | "heic" | "ico" | "jxl" => {
 			Some(tokens.yellow)
@@ -88,17 +73,8 @@ pub(crate) fn icon_for(name: &str, dir: bool, exec: bool, tokens: &Tokens) -> (&
 	(glyph, colour.unwrap_or(tokens.subtext))
 }
 
-/// How many cells of the name are always kept, whatever facts want to share the row: below it
-/// the facts are what crowds the name out, and a file list that cannot show its file names is
-/// not a file list (P12's own floor).
 pub(crate) const NAME_FLOOR: u32 = 10;
 
-/// The facts column a row shows, in its own pixels — or nothing at all. Only the middle column
-/// asks for them (P12: the parent list and the preview's directory listing are icon and name);
-/// inside it, a narrow column drops the time first and then the size, so the name keeps
-/// [`NAME_FLOOR`] cells either way. `advance` is the row's own character advance.
-/// The facts a row may wear, already spelled: the middle column asks for one of them by its
-/// linemode (P21: `m s`/`m m`/`m b`/`m p`/`m o` and the pair of defaults).
 pub(crate) struct Facts {
 	pub size:  String,
 	pub when:  String,
@@ -107,9 +83,6 @@ pub(crate) struct Facts {
 	pub owner: String,
 }
 
-/// The fact columns in their one fixed order (P33⑲⑥): the size first (it always stands), then the
-/// time, then the permissions, then the owner — only the ones that are open, and never two
-/// columns of one kind.
 pub(crate) fn columns_text(columns: Columns, facts: &Facts) -> String {
 	let mut parts = vec![ facts.size.clone() ];
 	if let Some(time) = columns.time {
@@ -133,7 +106,6 @@ pub(crate) fn row_facts(show: bool, columns: Columns, facts: &Facts, width: f32,
 		return None;
 	}
 
-	// the secondary face's own advance, the same 0.62 the rest of the window measures with
 	let small = FONT_SMALL * 0.62;
 	let room = NAME_FLOOR as f32 * advance;
 	let fits = |facts: &str| {
@@ -156,8 +128,6 @@ pub(crate) fn row_facts(show: bool, columns: Columns, facts: &Facts, width: f32,
 		parts.push(facts.owner.clone());
 	}
 
-	// out of room: the columns thin from the right — the owner goes first, then the permissions,
-	// then the time — and the size is the last one standing
 	while !parts.is_empty() {
 		let whole = parts.join("  ");
 		if fits(&whole) {
@@ -169,7 +139,6 @@ pub(crate) fn row_facts(show: bool, columns: Columns, facts: &Facts, width: f32,
 	None
 }
 
-/// `1.2K`, `3.4M` — a size a person reads rather than counts.
 pub(crate) fn size(bytes: u64) -> String {
 	match bytes {
 		b if b >= 1 << 30 => format!("{:.1}G", b as f64 / (1u64 << 30) as f64),
@@ -179,8 +148,6 @@ pub(crate) fn size(bytes: u64) -> String {
 	}
 }
 
-/// `MM-DD HH:MM`, from the clock the file carries. The civil date is computed here rather than
-/// taken from another crate: it is twelve lines of arithmetic anybody can check.
 pub(crate) fn when(modified: Option<SystemTime>) -> String {
 	let Some((_, month, day, hour, minute, _)) = civil(modified) else {
 		return "-".to_owned();
@@ -189,8 +156,6 @@ pub(crate) fn when(modified: Option<SystemTime>) -> String {
 	format!("{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
-/// A time said whole (P23's spot card): the year, the date and the seconds, because a card has the
-/// room and a person reading it wants the actual moment. `—` when the time is not there at all.
 pub(crate) fn moment(at: Option<SystemTime>) -> String {
 	let Some((year, month, day, hour, minute, second)) = civil(at) else {
 		return "—".to_owned();
@@ -199,8 +164,6 @@ pub(crate) fn moment(at: Option<SystemTime>) -> String {
 	format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
 }
 
-/// A timestamp as the person's own wall clock, not UTC: the list is read next to other programs'
-/// clocks, and an eight-hour shift reads as a wrong file (P46).
 fn civil(at: Option<SystemTime>) -> Option<(i64, i64, i64, u64, u64, u64)> {
 	let secs = at.and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs())?;
 	let offset = local_offset(secs);
@@ -222,14 +185,10 @@ fn civil(at: Option<SystemTime>) -> Option<(i64, i64, i64, u64, u64, u64)> {
 	Some((year, month, day, hour, minute, second))
 }
 
-/// How far the person's wall clock stands from UTC at that instant, in seconds: `localtime_r`
-/// knows the zone, the DST rule and `TZ`, and asks nobody to install anything — it is the C
-/// library the process already links. A clock that cannot answer keeps UTC rather than guessing.
 fn local_offset(secs: u64) -> i64 {
 	let Ok(secs) = libc::time_t::try_from(secs) else { return 0 };
 	let mut tm: libc::tm = unsafe { std::mem::zeroed() };
 	// SAFETY: `localtime_r` writes into the `tm` we own and returns a pointer into it (or null);
-	// nothing here is shared across threads.
 	let filled = unsafe { libc::localtime_r(&secs, &mut tm) };
 	if filled.is_null() {
 		return 0;
@@ -245,9 +204,6 @@ mod tests {
 	use super::*;
 	use crate::keys::Col;
 
-	/// The icon colours, after P34's re-source: yazi's own table answers first, and the filetype
-	/// rules stand behind it for what the table does not name — an executable green, a directory
-	/// blue, and anything the rules do not name keeps the plain file's face.
 	#[test]
 	fn the_type_colours_follow_the_filetype_rules() {
 		let tokens = Tokens::MOCHA;
@@ -267,16 +223,12 @@ mod tests {
 		assert_eq!(colour(".gitignore", false, false), crate::icons::colour(0xf54d27), "a name's own colour");
 		assert_eq!(colour("字体.ttf", false, false), crate::icons::colour(0xececec), "and a font's");
 
-		// the table answers before the exec rule: a `.sh` wears the shell's own face even when it
-		// runs — and a name the table does not know keeps the rule, an executable green
 		assert_eq!(colour("脚本.sh", false, true), crate::icons::colour(0x4d5a5e), "the table first");
 		assert_eq!(colour("bin/thing", false, true), tokens.ok, "no extension, so the rule: executable green");
 		assert_eq!(colour("图.png", false, true), crate::icons::colour(0xa074c4), "a picture keeps the picture's face");
 		assert_eq!(colour("目录", true, true), tokens.blue, "a directory is a directory");
 		assert_eq!(colour("下载", true, false), tokens.blue, "and one the table does not name keeps the folder's face");
 
-		// and the glyphs are the table's own faces (P34): the media families keep theirs, and the
-		// code's is the language's now — a Rust file wears the Rust glyph, not a generic sheet
 		assert_eq!(glyph("歌.mp3", false, false), "\u{f001}", "audio: the table's own notes");
 		assert_eq!(glyph("片子.mp4", false, false), "\u{e69f}", "video: the table's own film");
 		assert_eq!(glyph("本.rs", false, false), "\u{e68b}", "code: the language's own face, yazi's own table");
@@ -286,13 +238,6 @@ mod tests {
 		assert_eq!(glyph("谜.zzz", false, false), "\u{f15b}", "and what the table does not know keeps the generic face");
 	}
 
-
-
-
-
-
-	/// A name is clipped between cells: a wide glyph is taken whole or not at all, which is the one
-	/// thing a list of mixed Chinese and ASCII names cannot get wrong.
 	#[test]
 	fn a_name_is_clipped_between_cells_never_inside_one() {
 		assert_eq!(cell_width('a'), 1);
@@ -314,9 +259,6 @@ mod tests {
 		assert_eq!(size(3 * 1_073_741_824), "3.0G");
 	}
 
-	/// The facts column's own ladder (P12): only the middle column asks for facts at all; a wide
-	/// one shows the size and the time, a narrower one drops the time first, and a column too
-	/// narrow for either keeps its names and shows nothing. The floor is the name's own room.
 	#[test]
 	fn the_facts_ladder_gives_the_name_its_room() {
 		let advance = 16.0 * 0.62;
@@ -330,21 +272,16 @@ mod tests {
 
 		let set = |time: Option<TimeCol>, perms: bool, owner: bool| Columns { time, perms, owner };
 
-		// the left and right columns: no facts, whatever the width
 		assert_eq!(row_facts(false, Columns::default(), &facts("1.2K", "10-19 09:03"), 640.0, advance), None);
 		assert_eq!(row_facts(false, set(None, true, true), &facts("1.2K", "10-19 09:03"), 2000.0, advance), None);
 
-		// the middle column at a normal width: the default set, size and modification time
 		assert_eq!(
 			row_facts(true, Columns::default(), &facts("1.2K", "10-19 09:03"), 640.0, advance).as_deref(),
 			Some("1.2K  10-19 09:03")
 		);
-		// narrower: the columns thin from the right, the size is the last one standing
 		assert_eq!(row_facts(true, Columns::default(), &facts("1.2K", "10-19 09:03"), 260.0, advance).as_deref(), Some("1.2K"));
-		// too narrow for even that: no facts at all
 		assert_eq!(row_facts(true, Columns::default(), &facts("1.2K", "10-19 09:03"), 170.0, advance), None);
 
-		// the fixed order (P33⑲⑥): size, time, permissions, owner — only the open ones
 		assert_eq!(
 			row_facts(true, set(Some(TimeCol::Btime), true, true), &facts("1.2K", "10-19 09:03"), 640.0, advance).as_deref(),
 			Some("1.2K  10-19 09:03  rwxr-xr-x  LinXuan"),
@@ -361,8 +298,6 @@ mod tests {
 			"and the owner keeps its own place with the permissions away"
 		);
 
-		// the set itself (P33⑲②③⑤): toggles that add and take away, the exclusive time pair, the
-		// one-key reset
 		let mut columns = Columns::default();
 		assert_eq!(columns, set(Some(TimeCol::Mtime), false, false), "the default set is size and modification time");
 		columns.toggle(Col::Owner);
@@ -385,10 +320,6 @@ mod tests {
 		assert_eq!(columns, Columns::default(), "m n is the one-key reset");
 	}
 
-	/// The full form the spot card reads (P23): the year is there, the seconds are there, and a
-	/// time the file does not carry is a dash rather than a lie. The clock is the person's own,
-	/// so the expectation is built the same way the window builds it — through the C library's
-	/// `localtime_r` — and the two must agree whatever zone the machine stands in (P46).
 	#[test]
 	fn a_moment_is_said_whole() {
 		let at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);

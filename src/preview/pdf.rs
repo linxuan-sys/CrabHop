@@ -1,11 +1,3 @@
-//! PDFium, linked in: the library that turns a page into pixels — and `pdf-extract`, the text
-//! fallback the page render falls back to.
-//!
-//! A PDF preview is a picture of a page (§3.4), rendered at 150 DPI so its words can actually be
-//! read. Every step is fallible and none is fatal: when the library cannot be bound, or the
-//! document cannot be read, the caller falls back to text and the window stays up. Moved here from
-//! the legacy window's pdfium module with the DPI rule and the page
-//! parameter added for the spec's page flip.
 
 use std::sync::OnceLock;
 
@@ -13,18 +5,11 @@ use pdfium_render::prelude::*;
 
 use crate::preview::img;
 
-/// The faces the window already carries, handed to PDFium for documents that did not embed their
-/// own: a Chinese PDF built without its typeface asks for one by name, and with no answer its
-/// glyphs come out blank.
 const MAPLE_REGULAR: &[u8] = include_bytes!("../../assets/fonts/MapleMonoNormal-NF-CN-Regular.ttf");
 const MAPLE_BOLD: &[u8] = include_bytes!("../../assets/fonts/MapleMonoNormal-NF-CN-Bold.ttf");
 
-/// The spec's rendering floor (§3.4): 150 DPI, whatever the column's own size, so the page's
-/// letters survive the trip. The column fit only ever scales it down.
 pub(crate) const RENDER_DPI: f32 = 150.0;
 
-/// What the column says when a PDF's page cannot be rendered and its text cannot be extracted
-/// either: encrypted, damaged, or past what the extractor understands.
 pub(crate) const NOTE_FAILED: &str = "PDF 已加密或损坏";
 
 struct MapleFonts;
@@ -48,8 +33,6 @@ impl PdfiumCustomFontProvider for MapleFonts {
 	}
 }
 
-/// Bound once, early: a library that is missing, or built against a different version of the API,
-/// is a line in the log at startup rather than a surprise the first time a document is hovered.
 static PDFIUM: OnceLock<Option<Pdfium>> = OnceLock::new();
 
 fn library() -> Option<&'static Pdfium> {
@@ -70,12 +53,10 @@ fn library() -> Option<&'static Pdfium> {
 		.as_ref()
 }
 
-/// Bind the library before anything asks for it.
 pub(crate) fn warm() {
 	library();
 }
 
-/// A rendered page: its pixels, its own size, and where it sits in the document.
 pub(crate) struct Render {
 	pub(crate) page:  usize,
 	pub(crate) total: usize,
@@ -83,8 +64,6 @@ pub(crate) struct Render {
 	pub(crate) rgba:  Vec<u8>,
 }
 
-/// One page as RGBA pixels: at 150 DPI, then scaled down to the column's width — fit-width, the
-/// way §3.4 reads. `None` means "no library, or a document it cannot open": the caller falls back.
 pub(crate) fn render(bytes: &[u8], target: [u32; 2], page: usize) -> Option<Render> {
 	let pdfium = library()?;
 	let doc = pdfium.load_pdf_from_byte_slice(bytes, None).ok()?;
@@ -94,8 +73,6 @@ pub(crate) fn render(bytes: &[u8], target: [u32; 2], page: usize) -> Option<Rend
 	let (pw, ph) = (page_handle.width().value.max(1.0), page_handle.height().value.max(1.0));
 	let ratio = ph / pw;
 
-	// 150 DPI: a point is 1/72 inch, so the page is rendered 150/72 times its point size — unless
-	// the column is narrower than that, in which case the fit done here is the whole render.
 	let dpi_scale = RENDER_DPI / 72.0;
 	let bitmap = page_handle
 		.render_with_config(&PdfRenderConfig::new().scale_page_by_factor(dpi_scale))
@@ -107,8 +84,6 @@ pub(crate) fn render(bytes: &[u8], target: [u32; 2], page: usize) -> Option<Rend
 	let mut size = [ bitmap.width() as u32, bitmap.height() as u32 ];
 	let mut rgba = bitmap.as_rgba_bytes();
 
-	// the column's width is the ceiling; a page rendered narrower than it stays as it is (no
-	// upscaling past the 150 DPI floor)
 	if size[0] > target[0].max(1) {
 		let width = target[0].max(1);
 		let height = ((width as f32 * ratio).round() as u32).max(1);
@@ -116,19 +91,12 @@ pub(crate) fn render(bytes: &[u8], target: [u32; 2], page: usize) -> Option<Rend
 		size = [ width, height ];
 	}
 
-	// the page keeps its own shape: 612 × 792 points is a portrait, and the fit maths above is the
-	// one that decides the scale — `thumbnail()` is not it, it pins both axes.
 	Some(Render { page, total, size, rgba })
 }
 
-/// A PDF as text: its first page, and nothing that can take the engine down with it.
 pub(crate) struct Pdf;
 
 impl Pdf {
-	/// The extractor hands out pages one at a time, so asking for one is both the cheapest and the
-	/// only promise made. `None` means "say so and move on": unsupported predefined CMaps
-	/// (`GBK-EUC-H` and friends) and missing `ToUnicode` tables are the crate's known ways of
-	/// failing, and the latter can panic — caught here, not on the window.
 	pub(crate) fn extract(bytes: &[u8]) -> Option<String> {
 		let pages = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem_by_pages(bytes))
 			.ok()?
@@ -145,7 +113,6 @@ mod tests {
 
 	use super::*;
 
-	/// One page, built by the test itself, so it carries no fixture file.
 	fn fixture(lines: &[(&str, i64)]) -> Vec<u8> {
 		let mut doc = Document::with_version("1.5");
 
@@ -174,8 +141,6 @@ mod tests {
 		out
 	}
 
-	/// The acceptance for the PDF preview: a page renders at the column's width with the page's own
-	/// shape, and the badge's `n / total` comes back with it.
 	#[test]
 	fn a_page_renders_at_the_columns_width_and_the_page_counts() {
 		let bytes = fixture(&[("First page", 720), ("Second page", 600)]);
@@ -189,11 +154,9 @@ mod tests {
 		let ratio = page.size[0] as f32 / page.size[1] as f32;
 		assert!((ratio - 612.0 / 792.0).abs() < 0.01, "the page keeps its shape: {:?}", page.size);
 
-		// and a page index past the end is not a page
 		assert!(render(&bytes, [ 320, 600 ], 5).is_none());
 	}
 
-	/// The text fallback: the first page's words come out, and later pages are not promised.
 	#[test]
 	fn the_first_page_comes_out_as_text_and_later_pages_do_not() {
 		let bytes = fixture(&[("First page", 720), ("Second page", 600)]);

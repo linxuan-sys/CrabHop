@@ -1,14 +1,9 @@
-//! The little completion the command line and open-with share: the token at the end of a line,
-//! its candidates, and which one is standing. The candidates themselves are read from the disk
-//! for paths, and from the history and `$PATH` for commands (in `open.rs`).
 
 use std::path::Path;
 
 use crate::edit::Edit;
 
-/// A candidate list and the seat the active one holds.
 pub(crate) struct Completions {
-	/// The byte offset the candidates replace: everything from here to the end of the line.
 	pub from:  usize,
 	pub items: Vec<String>,
 	pub at:    usize,
@@ -24,7 +19,6 @@ impl Completions {
 		self.at = (self.at as isize + step).rem_euclid(len) as usize;
 	}
 
-	/// The active candidate written into the line, and the caret at its end.
 	pub(crate) fn apply(&self, edit: &mut Edit) {
 		let Some(item) = self.items.get(self.at) else { return };
 		edit.text.truncate(self.from.min(edit.text.len()));
@@ -33,14 +27,10 @@ impl Completions {
 	}
 }
 
-/// Where the token a completion replaces begins: after the last blank of the line.
 pub(crate) fn token_start(line: &str) -> usize {
 	line.rfind(char::is_whitespace).map_or(0, |at| at + 1)
 }
 
-/// Path candidates for a line's last token, read from the disk under `cwd`: the entries of the
-/// token's own directory whose names carry on what was typed, directories marked with their
-/// slash. A token that is already a complete name still lists the names under it.
 pub(crate) fn paths(line: &str, cwd: &Path, cap: usize) -> Vec<String> {
 	let token = &line[token_start(line)..];
 	let (prefix, dir, stem) = match token.rfind('/') {
@@ -72,7 +62,6 @@ mod tests {
 	use super::*;
 	use std::path::PathBuf;
 
-	/// The token is what follows the last blank, and applying a candidate rewrites exactly it.
 	#[test]
 	fn a_completion_replaces_the_last_token_only() {
 		assert_eq!(token_start("cat doc"), 4);
@@ -93,8 +82,6 @@ mod tests {
 		assert_eq!(completion.at, 0, "the ring wraps");
 	}
 
-	/// Path candidates come off the disk: the prefix that was typed stays, a directory keeps its
-	/// slash, and only what carries on the name is listed.
 	#[test]
 	fn path_candidates_read_the_directory_the_token_points_at() {
 		let dir = std::env::temp_dir().join(format!("crabhop-complete-{}", std::process::id()));

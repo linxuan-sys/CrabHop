@@ -1,7 +1,3 @@
-//! In-process search (the keymap's `s` / `S`): names through the `ignore` walker — the same
-//! gitignore-respecting traversal fd and rg stand on — and contents through the grep crates' own
-//! searcher and regex engine. Nothing here shells out; the spec forbids it, and a walk of a tree
-//! is no reason to.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,28 +8,22 @@ use grep_regex::RegexMatcher;
 use grep_searcher::{Searcher, SearcherBuilder, Sink, SinkMatch};
 use ignore::WalkBuilder;
 
-/// How many rows a search brings back before it stops: a panel is a fast lane, not a listing.
 pub(crate) const CAP: usize = 4000;
-/// Results travel in batches this size, so a long walk shows its work while it walks.
 const BATCH: usize = 64;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Hit {
 	pub path: PathBuf,
-	/// A content match's own line: its number and its text, trimmed. A name search leaves both
-	/// alone — the name speaks for itself.
 	pub line: Option<u64>,
 	pub text: Option<String>,
 }
 
-/// A search in flight: the flag that stops it, and the wire its batches arrive on.
 pub(crate) struct Job {
 	cancel: Arc<AtomicBool>,
 	pub rx: Receiver<Vec<Hit>>,
 }
 
 impl Job {
-	/// `<C-s>`: the walk stops at its next entry — a cancelled search is not an error.
 	pub(crate) fn cancel(&self) {
 		self.cancel.store(true, Ordering::Relaxed);
 	}
@@ -48,9 +38,6 @@ fn spawn(run: impl FnOnce(&AtomicBool, &Sender<Vec<Hit>>) + Send + 'static) -> J
 	Job { cancel, rx }
 }
 
-/// `s`: names under the root whose own file name carries the query. Smart case: a query with a
-/// capital answers exactly, one without answers widely. The walk is fd's own posture: the ignore
-/// files are respected and hidden files stay out — that is what the tool the keymap names does.
 pub(crate) fn names(root: &Path, query: &str, cap: usize) -> Job {
 	let (root, query) = (root.to_owned(), query.to_owned());
 
@@ -84,9 +71,6 @@ pub(crate) fn names(root: &Path, query: &str, cap: usize) -> Job {
 	})
 }
 
-/// `S`: the lines under the root the pattern matches, as `path`, line number and text. The
-/// matcher is a real regex — the grep family's own, never a C engine — and a pattern that does
-/// not parse simply finds nothing. The walk is rg's own posture, hidden files and all.
 pub(crate) fn contents(root: &Path, query: &str, cap: usize) -> Job {
 	let (root, pattern) = (root.to_owned(), query.to_owned());
 
@@ -124,8 +108,6 @@ pub(crate) fn contents(root: &Path, query: &str, cap: usize) -> Job {
 	})
 }
 
-/// The searcher's own sink: every match becomes a row — the path, the line's number and its own
-/// text — until the cap or the cancel says stop.
 struct Collect<'a> {
 	path:      &'a Path,
 	hits:      &'a mut Vec<Hit>,
@@ -158,7 +140,6 @@ mod tests {
 		dir
 	}
 
-	/// Every batch a job sends until it closes — the same loop the window's own polling runs.
 	fn collect(job: &Job) -> Vec<Hit> {
 		let mut hits = Vec::new();
 		while let Ok(batch) = job.rx.recv() {
@@ -167,8 +148,6 @@ mod tests {
 		hits
 	}
 
-	/// A name search finds by substring, answers a lowercase query widely and a capitalised one
-	/// exactly, and holds to fd's posture: hidden files stay out.
 	#[test]
 	fn a_name_search_finds_by_substring_with_smart_case() {
 		let dir = scratch("names");
@@ -193,8 +172,6 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// A content search brings the matching lines with their numbers, and a pattern that does not
-	/// parse finds nothing rather than failing the window.
 	#[test]
 	fn a_content_search_brings_lines_and_numbers() {
 		let dir = scratch("lines");
@@ -205,7 +182,6 @@ mod tests {
 		assert_eq!(hits[0].line, Some(2));
 		assert_eq!(hits[0].text.as_deref(), Some("second needle"));
 
-		// a multi-line pattern is the matcher's own business: the call must simply not panic
 		let _ = collect(&contents(&dir, "first\nsecond", 100));
 
 		assert!(collect(&contents(&dir, "([unclosed", 100)).is_empty(), "an unparseable pattern is quiet");
@@ -213,7 +189,6 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// The cap holds: a tree with more matches than the cap sends the cap and closes.
 	#[test]
 	fn the_cap_is_where_a_search_stops() {
 		let dir = scratch("cap");

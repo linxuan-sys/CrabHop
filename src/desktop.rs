@@ -1,15 +1,6 @@
-//! What the desktop already knows (P31): the `.desktop` entries a machine has installed, the
-//! handler order a person's own `mimeapps.list` states, the field codes an entry's `Exec` carries,
-//! and the terminal that machine would open. Read, never installed — this window only ever looks
-//! at what a desktop put there.
-//!
-//! Every rule lives in a pure function: the tests hand in a PATH, the text of an entry, the text
-//! of a preferences file, and read the answers back.
 
 use std::path::{Path, PathBuf};
 
-/// The MIME a name carries (P31): the small table of types this window names, and one answer for
-/// everything else. A directory is a directory whatever its name ends in.
 pub(crate) fn mime_of(name: &str, dir: bool) -> String {
 	if dir {
 		return "inode/directory".to_owned();
@@ -57,7 +48,6 @@ pub(crate) fn mime_of(name: &str, dir: bool) -> String {
 	.to_owned()
 }
 
-/// The directories a desktop keeps its entries in (P31): read-only, and never written to.
 pub(crate) fn app_dirs(home: Option<&Path>) -> Vec<PathBuf> {
 	let mut dirs = vec![ PathBuf::from("/usr/share/applications"), PathBuf::from("/usr/local/share/applications") ];
 	if let Some(home) = home {
@@ -67,30 +57,17 @@ pub(crate) fn app_dirs(home: Option<&Path>) -> Vec<PathBuf> {
 	dirs
 }
 
-/// One installed application, as its own entry tells it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Entry {
-	/// The file's own name, `kitty.desktop` — what `mimeapps.list` names it by.
 	pub id:    String,
-	/// What a person calls it.
 	pub name:  String,
-	/// The command line as written, field codes and all.
 	pub exec:  String,
-	/// The types it says it handles.
 	pub mimes: Vec<String>,
-	/// Entries a desktop shows nowhere on its own menu: **kept as candidates all the same** (P39's
-/// gio alignment — `gio mime` lists them), and what the scan's own merge reads to keep a visible
-/// copy of the same app standing (P35).
 	pub nodisplay: bool,
-	/// `Terminal=true`: the command line is a program for a terminal, and a launcher wraps it in
-	/// the machine's own (P35's gio alignment).
 	pub terminal: bool,
-	/// `TryExec`: whether the program is there at all. A name is searched on `PATH`, a path is
-	/// the path; a failed one hides the entry from the candidates.
 	pub try_exec: Option<String>,
 }
 
-/// One `.desktop` file, parsed: `None` when it is not an application, or says it is hidden.
 pub(crate) fn parse_entry(text: &str, id: &str) -> Option<Entry> {
 	let mut section = String::new();
 	let (mut name, mut exec, mut mimes, mut nodisplay, mut hidden, mut kind) = (None, None, Vec::new(), false, false, None);
@@ -120,8 +97,6 @@ pub(crate) fn parse_entry(text: &str, id: &str) -> Option<Entry> {
 			}
 			"NoDisplay" if value.trim() == "true" => nodisplay = true,
 			"Hidden" if value.trim() == "true" => hidden = true,
-			// `Terminal=true` and `TryExec` are the launch's own business (P35): the first wraps
-			// the command line in a terminal, the second hides an entry whose program is absent
 			"Terminal" if value.trim() == "true" => terminal = true,
 			"TryExec" => try_exec = Some(value.trim().to_owned()),
 			_ => {}
@@ -132,12 +107,9 @@ pub(crate) fn parse_entry(text: &str, id: &str) -> Option<Entry> {
 		return None;
 	}
 
-	// an entry with no command and no name is nothing a menu can offer
 	Some(Entry { id: id.to_owned(), name: name?, exec: exec?, mimes, nodisplay, terminal, try_exec })
 }
 
-/// Every entry the given directories hold, in a stable order: the local ones first for the same
-/// id, and the file names themselves deciding the rest.
 pub(crate) fn scan(dirs: &[PathBuf]) -> Vec<Entry> {
 	let mut entries: Vec<Entry> = Vec::new();
 
@@ -152,11 +124,6 @@ pub(crate) fn scan(dirs: &[PathBuf]) -> Vec<Entry> {
 
 			let Ok(text) = std::fs::read_to_string(&path) else { continue };
 			if let Some(entry) = parse_entry(&text, name) {
-				// a local entry of the same id wins over a system one — unless the standing copy
-				// shows and the newcomer hides itself (P35's final bug: a user-local
-				// `nvim.desktop` wearing `NoDisplay=true` masked the installed one, and the
-				// panel lost an app a desktop's own registry still lists). The visible copy
-				// stands, so an app that is installed keeps a row.
 				if let Some(at) = entries.iter().position(|other| other.id == entry.id) {
 					if !(entry.nodisplay && !entries[at].nodisplay) {
 						entries[at] = entry;
@@ -172,18 +139,14 @@ pub(crate) fn scan(dirs: &[PathBuf]) -> Vec<Entry> {
 	entries
 }
 
-/// The `[Default Applications]` line for a type, out of a `mimeapps.list`'s own text.
 pub(crate) fn preferred_in(text: &str, mime: &str) -> Vec<String> {
 	section_line(text, "Default Applications", mime)
 }
 
-/// The `[Added Associations]` line for a type (P35's gio alignment): the entries a person added
-/// as handlers for it — they join the candidates even when their own `MimeType` does not name it.
 pub(crate) fn added_in(text: &str, mime: &str) -> Vec<String> {
 	section_line(text, "Added Associations", mime)
 }
 
-/// One section's line for a type, as ids: `mime=id;id;` — the order it is written in.
 fn section_line(text: &str, wanted: &str, mime: &str) -> Vec<String> {
 	let mut section = String::new();
 
@@ -207,16 +170,6 @@ fn section_line(text: &str, wanted: &str, mime: &str) -> Vec<String> {
 	Vec::new()
 }
 
-/// The entries that handle a type — or any type it is a kind of (P33⑥): a desktop's own
-/// managers answer `text/markdown` with the `text/plain` editors, because markdown is a kind of
-/// plain text, and so does this window. The types come in as the closure (the type itself
-/// first); **`[Added Associations]`** ids join the candidates even without a `MimeType` line for
-/// the type (P35's gio alignment, `added`); a `TryExec` that is not there hides its entry
-/// (`PATH` is checked once per entry — the caller's own reading); a `Terminal=true` entry stays
-/// (the launcher wraps it). The ones `mimeapps.list` prefers stand first, in that order, then
-/// the rest by name. **`NoDisplay=true` stays in** (P39's gio alignment): a desktop's own
-/// `gio mime` lists such entries as candidates — the flag hides an app from the menu, never
-/// from the open-with list (`Hidden=true` never got this far: the parser drops it).
 pub(crate) fn handlers<'a>(
 	entries: &'a [Entry],
 	types: &[String],
@@ -239,10 +192,6 @@ pub(crate) fn handlers<'a>(
 	found
 }
 
-/// Every application a panel may offer (P35's addendum's own zone): `TryExec` satisfied, in name
-/// order — browsers and everything else, so a person picks what they like. `NoDisplay=true`
-/// stays here too (P39): gio's own registry lists those entries, and the full zone is the wider
-/// answer still.
 pub(crate) fn all_apps(entries: &[Entry], path_env: &str) -> Vec<Entry> {
 	let mut all: Vec<Entry> = entries.iter().filter(|entry| try_exec_ok(entry, path_env)).cloned().collect();
 	all.sort_by_key(|entry| entry.name.to_lowercase());
@@ -250,8 +199,6 @@ pub(crate) fn all_apps(entries: &[Entry], path_env: &str) -> Vec<Entry> {
 	all
 }
 
-/// Whether an entry's own `TryExec` is satisfied (P35's gio alignment): a name is searched on
-/// `PATH` the way a shell would, a path is the path, and an entry that names nothing is fine.
 pub(crate) fn try_exec_ok(entry: &Entry, path_env: &str) -> bool {
 	let Some(program) = &entry.try_exec else { return true };
 
@@ -262,9 +209,6 @@ pub(crate) fn try_exec_ok(entry: &Entry, path_env: &str) -> bool {
 	which_in(path_env, program).is_some()
 }
 
-/// The command a `Terminal=true` handler's row actually runs (P35): the entry's own argv,
-/// wrapped in the machine's terminal chain — the same chain `T` and the menu's own terminal
-/// item use. Pure, so the wrapping is read without a machine.
 pub(crate) fn launch_argv(program: Vec<String>, terminal: Option<&[String]>) -> Vec<String> {
 	match terminal {
 		Some(chain) => chain.iter().cloned().chain(program).collect(),
@@ -272,8 +216,6 @@ pub(crate) fn launch_argv(program: Vec<String>, terminal: Option<&[String]>) -> 
 	}
 }
 
-/// One command line's own words (P31): the `Exec` grammar's quoting, and nothing else — no shell
-/// is ever asked to read this.
 fn words(exec: &str) -> Vec<String> {
 	let mut out = Vec::new();
 	let (mut word, mut quoted) = (String::new(), false);
@@ -298,9 +240,6 @@ fn words(exec: &str) -> Vec<String> {
 	out
 }
 
-/// A command line with its field codes stood in for a file (P31): `%f`/`%u`/`%F`/`%U` become the
-/// path, `%%` a percent, the codes that name nothing here are dropped — and a line that mentions
-/// no file at all gets the path appended, the way a person would write it.
 pub(crate) fn exec_argv(exec: &str, path: &Path, _mime: &str) -> Vec<String> {
 	let path = path.to_string_lossy();
 	let mut argv = Vec::new();
@@ -326,8 +265,6 @@ pub(crate) fn exec_argv(exec: &str, path: &Path, _mime: &str) -> Vec<String> {
 					placed = true;
 				}
 				Some('%') => built.push('%'),
-				// `%i` and `%c` name the icon and the entry, `%k` the file itself: nothing a
-				// command line needs
 				Some(_) => {}
 				None => built.push('%'),
 			}
@@ -345,8 +282,6 @@ pub(crate) fn exec_argv(exec: &str, path: &Path, _mime: &str) -> Vec<String> {
 	argv
 }
 
-/// A command line with its field codes taken out: what a terminal's own entry asks for is its
-/// command, and the codes are dropped rather than standing in for a file nobody named.
 pub(crate) fn command_argv(exec: &str) -> Vec<String> {
 	words(exec)
 		.into_iter()
@@ -371,9 +306,6 @@ pub(crate) fn command_argv(exec: &str) -> Vec<String> {
 		.collect()
 }
 
-/// The person's own default handler for a type, from the desk's shared ledger (P38④): the id the
-/// person's own file answers first, the system's behind it — and only a `Terminal=true` entry
-/// answers with a command, because the rest belong to `xdg-open` and the desktop's own rules.
 pub(crate) fn default_terminal(entries: &[Entry], user: &str, system: &str, mime: &str, path: &Path) -> Option<Vec<String>> {
 	let id = preferred_in(user, mime)
 		.into_iter()
@@ -383,9 +315,6 @@ pub(crate) fn default_terminal(entries: &[Entry], user: &str, system: &str, mime
 	entries.iter().find(|entry| entry.id == id).filter(|entry| entry.terminal).map(|entry| exec_argv(&entry.exec, path, mime))
 }
 
-/// A `mimeapps.list` with one type pointed at one entry (P31's `总是`, back in P38②): the line is
-/// replaced where it stands, put under the section where the section is, and the section made
-/// where it is not — every other line, comment and section untouched, in its own order.
 pub(crate) fn merge_defaults(text: &str, mime: &str, id: &str) -> String {
 	let line = format!("{mime}={id};");
 	let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
@@ -395,8 +324,6 @@ pub(crate) fn merge_defaults(text: &str, mime: &str, id: &str) -> String {
 	for (at, raw) in lines.iter().enumerate() {
 		let trimmed = raw.trim();
 		if trimmed.starts_with('[') && trimmed.ends_with(']') {
-			// the first `[Default Applications]` is the one to write into: a later section's lines
-			// that happen to name the same type are somebody else's business
 			let name = &trimmed[1..trimmed.len() - 1];
 			inside = name == "Default Applications" && section.is_none();
 			if inside {
@@ -432,11 +359,6 @@ pub(crate) fn merge_defaults(text: &str, mime: &str, id: &str) -> String {
 	text
 }
 
-/// Write a file whole, and land it at once (P31's `总是`, back in P38②④): a temp file beside it,
-/// then a rename — a reader never sees half a preference file, and a failed write leaves the old
-/// one standing. The ledger keeps the mode it had; a fresh file lands 0600. Only the real window
-/// ever calls it: a test hands its preferences in instead (`App::set_mimeapps_for_tests`) and
-/// writes no file at all.
 pub(crate) fn write_atomic(at: &Path, text: &str) -> std::io::Result<()> {
 	use std::os::unix::fs::PermissionsExt;
 
@@ -453,7 +375,6 @@ pub(crate) fn write_atomic(at: &Path, text: &str) -> std::io::Result<()> {
 	std::fs::rename(&temp, at)
 }
 
-/// Find an executable under a PATH: the same search the shell would do.
 pub(crate) fn which_in(path_env: &str, name: &str) -> Option<PathBuf> {
 	path_env.split(':').filter(|dir| !dir.is_empty()).map(|dir| Path::new(dir).join(name)).find(|at| is_executable(at))
 }
@@ -464,10 +385,6 @@ fn is_executable(at: &Path) -> bool {
 	std::fs::metadata(at).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
-/// The terminal this machine would open in a directory (P31's chain): `xdg-terminal-exec`, then
-/// what the desktop answers for `x-scheme-handler/terminal` (its entry's own command), then
-/// `$TERMINAL`, then the four whose names live on every path. Pure: the PATH, the two answers and
-/// the scanned entries all come in, and the cwd is the caller's own business.
 pub(crate) fn terminal(
 	path_env: &str,
 	env_terminal: Option<&str>,
@@ -478,7 +395,6 @@ pub(crate) fn terminal(
 		return Some(vec![ "xdg-terminal-exec".to_owned() ]);
 	}
 
-	// the desktop's own answer names an entry, whose Exec is the command
 	if let Some(id) = xdg_default
 		&& let Some(entry) = entries.iter().find(|entry| entry.id == id)
 	{
@@ -508,7 +424,6 @@ pub(crate) fn terminal(
 mod tests {
 	use super::*;
 
-	/// The types this window names, and the one every directory has (P31).
 	#[test]
 	fn the_mime_table_names_the_common_types() {
 		assert_eq!(mime_of("a.png", false), "image/png");
@@ -521,8 +436,6 @@ mod tests {
 		assert_eq!(mime_of("weird.png", true), "inode/directory", "whatever it is called");
 	}
 
-	/// An entry's own parsing (P31): the `[Desktop Entry]` section only, the fields a menu needs,
-	/// and the entries a desktop hides are not applications.
 	#[test]
 	fn an_entry_is_parsed_from_its_own_section() {
 		let text = "\
@@ -563,11 +476,6 @@ NoDisplay=true
 		assert!(parse_entry(bare, "x.desktop").is_none(), "an entry with no command offers nothing");
 	}
 
-
-	/// The handlers of a type (P31; P33⑥'s inheritance closure; P35's gio alignment): those an
-	/// entry claims — or claims through a type this one is a kind of — plus the ids
-	/// `[Added Associations]` names, the ones the person's own preferences put first, and nothing
-	/// a desktop hides or that names a program which is not there.
 	#[test]
 	fn the_handlers_follow_the_persons_own_order() {
 		let entry = |id: &str, name: &str, mimes: &[&str], nodisplay: bool| Entry {
@@ -596,17 +504,14 @@ NoDisplay=true
 
 		assert!(handlers(&entries, &exact("video/mp4"), &[], &[], "").is_empty(), "nothing claims that type");
 
-		// markdown is a kind of plain text: the closure finds the editors that only list the parent
 		let types = vec![ "text/markdown".to_owned(), "text/plain".to_owned() ];
 		let names: Vec<&str> = handlers(&entries, &types, &[], &[], "").iter().map(|entry| entry.name.as_str()).collect();
 		assert_eq!(names, vec![ "Delta" ], "the parent's own editors answer for the child");
 
-		// `[Added Associations]` (P35): `Alpha` joins a type it never wrote in its own MimeType
 		let found = handlers(&entries, &exact("video/mp4"), &[], &[ "a.desktop".to_owned() ], "");
 		let names: Vec<&str> = found.iter().map(|entry| entry.name.as_str()).collect();
 		assert_eq!(names, vec![ "Alpha" ], "an added association is a candidate");
 
-		// `TryExec` (P35): an entry whose program is not on the PATH is not offered
 		let mut ghost = entries.clone();
 		ghost.push(Entry {
 			id:       "e.desktop".to_owned(),
@@ -621,8 +526,6 @@ NoDisplay=true
 		assert!(!names.contains(&"Epsilon"), "a TryExec that is not there hides the entry");
 	}
 
-	/// A command line with its field codes stood in for a file (P31): every spelling, the dropped
-	/// codes, a quoted argument, and the path appended when the line never names one.
 	#[test]
 	fn a_command_line_stands_in_for_the_file() {
 		let path = Path::new("/tmp/a picture.png");
@@ -639,9 +542,6 @@ NoDisplay=true
 		assert_eq!(argv("app %"), vec![ "app", "%", "/tmp/a picture.png" ], "a lone percent is nobody's code, and stands as it was written");
 	}
 
-	/// The default-open path's terminal wrap (P37④) and its ledger chain (P38④): the person's own
-/// line answers first, the system's behind it — and the wrap only for a `Terminal=true` one;
-/// anything else belongs to `xdg-open`.
 	#[test]
 	fn the_default_terminal_answers_only_for_a_terminal_entry() {
 		let entry = |id: &str, terminal: bool| Entry {
@@ -684,9 +584,6 @@ NoDisplay=true
 		);
 	}
 
-	/// The preferences file's own merge (P31's `总是`, back with P38②): the line replaced where it
-	/// stands, put under the section where the section is, the section made where it is not — and
-	/// everything else, comments and sections alike, kept where it was.
 	#[test]
 	fn the_defaults_merge_keeps_everything_else() {
 		let text = "\
@@ -708,11 +605,9 @@ image/png=c.desktop;
 		assert!(merged.contains("[Removed Associations]\nimage/png=c.desktop;"), "and so does the last one");
 		assert_eq!(merged.matches("image/png=new.desktop").count(), 1);
 
-		// a type the section does not mention yet goes right under its header
 		let merged = merge_defaults(text, "video/mp4", "player.desktop");
 		assert!(merged.contains("[Default Applications]\nvideo/mp4=player.desktop;\nimage/png=old.desktop;"), "{merged}");
 
-		// no section at all: one is made at the end, with its own blank line before it
 		let merged = merge_defaults("[Added Associations]\nimage/png=a.desktop;\n", "image/png", "new.desktop");
 		assert!(merged.ends_with("[Default Applications]\nimage/png=new.desktop;\n"), "{merged}");
 
@@ -720,8 +615,6 @@ image/png=c.desktop;
 		assert_eq!(merged, "[Default Applications]\nimage/png=new.desktop;\n", "an empty file gets the section");
 	}
 
-	/// The terminal chain (P31), every step of it: `xdg-terminal-exec`, the desktop's own answer,
-	/// `$TERMINAL`, the four names — and nothing at all when none of them is there.
 	#[test]
 	fn the_terminal_chain_takes_the_first_it_finds() {
 		let dir = std::env::temp_dir().join(format!("crabhop-terminal-{}", std::process::id()));
@@ -750,20 +643,16 @@ image/png=c.desktop;
 			try_exec: None,
 		} ];
 
-		// 1. xdg-terminal-exec first
 		assert_eq!(terminal(&path, Some("wezterm"), Some("kgx.desktop"), &entries), Some(vec![ "xdg-terminal-exec".to_owned() ]));
 
-		// 2. the desktop's own answer, its codes dropped
 		let without = std::env::temp_dir().join(format!("crabhop-terminal-empty-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&without);
 		std::fs::create_dir_all(&without).expect("a directory");
 		let bare_path = without.to_str().unwrap().to_owned();
 		assert_eq!(terminal(&bare_path, Some("wezterm"), Some("kgx.desktop"), &entries), Some(vec![ "kgx".to_owned(), "--".to_owned() ]));
 
-		// 3. $TERMINAL, its own words kept apart
 		assert_eq!(terminal(&bare_path, Some("alacritty --class float"), None, &entries), Some(vec![ "alacritty".to_owned(), "--class".to_owned(), "float".to_owned() ]));
 
-		// 4. the four names, in their own order
 		assert_eq!(terminal(&path, None, None, &[]), Some(vec![ "xdg-terminal-exec".to_owned() ]));
 		let kitty_only = std::env::temp_dir().join(format!("crabhop-terminal-kitty-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&kitty_only);
@@ -776,7 +665,6 @@ image/png=c.desktop;
 		}
 		assert_eq!(terminal(kitty_only.to_str().unwrap(), None, None, &[]), Some(vec![ "kitty".to_owned() ]));
 
-		// and nothing anywhere is nothing
 		assert!(terminal(&bare_path, None, None, &entries).is_none(), "no terminal this chain can name");
 
 		let _ = std::fs::remove_dir_all(&dir);
@@ -784,8 +672,6 @@ image/png=c.desktop;
 		let _ = std::fs::remove_dir_all(&kitty_only);
 	}
 
-	/// The scan reads the directories it is given and tells the entries apart by name, a local one
-	/// winning over a system one of the same id.
 	#[test]
 	fn the_scan_reads_what_the_directories_hold() {
 		let root = std::env::temp_dir().join(format!("crabhop-scan-{}", std::process::id()));
@@ -804,10 +690,6 @@ image/png=c.desktop;
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P35's final bug, on the very bytes that caused it: a user-local `nvim.desktop` wearing
-	/// `NoDisplay=true` masked the installed entry, and the window lost an app a desktop's own
-	/// registry still lists. A copy that hides itself never displaces a visible one; a visible
-	/// local copy still wins, as it always did.
 	#[test]
 	fn a_hiding_local_copy_does_not_mask_the_installed_entry() {
 		let root = std::env::temp_dir().join(format!("crabhop-shadow-{}", std::process::id()));
@@ -815,7 +697,6 @@ image/png=c.desktop;
 		std::fs::create_dir_all(root.join("system")).expect("a directory");
 		std::fs::create_dir_all(root.join("local")).expect("a directory");
 
-		// the installed entry — harmless stand-in with the shape that matters
 		let visible = "[Desktop Entry]\nType=Application\nName=Neovim\nExec=nvim %F\nTerminal=true\nTryExec=nvim\nMimeType=text/plain;text/x-csrc;\n";
 		let hidden = format!("{visible}NoDisplay=true\n");
 		std::fs::write(root.join("system/nvim.desktop"), visible).unwrap();
@@ -832,7 +713,6 @@ image/png=c.desktop;
 			handlers(&entries, &types, &[], &[], &std::env::var("PATH").unwrap_or_default()).iter().map(|e| e.id.as_str()).collect();
 		assert_eq!(listed, vec![ "nvim.desktop" ], "and it is a candidate for text/plain");
 
-		// a visible local copy still shadows the system one — the old rule, intact
 		let renamed = "[Desktop Entry]\nType=Application\nName=Mine Nvim\nExec=nvim %F\nMimeType=text/plain;\n";
 		std::fs::write(root.join("local/nvim.desktop"), renamed).unwrap();
 		let entries = scan(&[ root.join("system"), root.join("local") ]);
@@ -842,9 +722,6 @@ image/png=c.desktop;
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// The real `/usr/share/applications/nvim.desktop` bytes (P35's own evidence), read from the
-	/// machine — its 93rd line carries the MimeType list and its markers are all ordinary: the
-	/// parser and the candidate filter must keep it whole. A machine without the file skips.
 	#[test]
 	fn the_installed_nvim_parses_and_is_a_candidate() {
 		let Ok(text) = std::fs::read_to_string("/usr/share/applications/nvim.desktop") else { return };
@@ -863,10 +740,6 @@ image/png=c.desktop;
 		assert_eq!(listed, vec![ "nvim.desktop" ], "nvim is offered for text/plain");
 	}
 
-	/// `[Added Associations]` and the launch wrap (P35's gio alignment): the section's line is
-	/// read as ids, and a `Terminal=true` program's command is the terminal chain with the
-	/// program's own argv after it. Plus the full zone's own filter (P35's addendum): every
-	/// application that shows itself and whose program is there, by name.
 	#[test]
 	fn the_added_associations_and_the_terminal_wrap_are_read() {
 		let text = "\
@@ -888,8 +761,6 @@ text/plain=editor.desktop;
 		);
 		assert_eq!(launch_argv(program.clone(), None), program, "with no chain the program stands alone");
 
-		// the full zone: every application whose program is there, by name — and a `NoDisplay=true`
-		// entry stays (P39: the flag hides an app from a menu, never from a candidate list)
 		let entry = |id: &str, name: &str, nodisplay: bool, try_exec: Option<&str>| Entry {
 			id:     id.to_owned(),
 			name:   name.to_owned(),
@@ -915,19 +786,11 @@ text/plain=editor.desktop;
 		);
 	}
 
-	/// P39's gio alignment: `NoDisplay=true` hides an app from the desktop's own menu, never from
-	/// the open-with list — the `gio mime` of a machine that started this lists such entries as
-	/// candidates (satty.desktop, `NoDisplay=true`, `MimeType=image/png`, `TryExec=satty`, is the
-	/// person's own image/png default). `Hidden=true` stays out of everything (the parser drops it
-	/// before any list can see it), a failing `TryExec` still hides, and the rest of that
-	/// machine's roster stands in the full zone.
 	#[test]
 	fn the_candidates_keep_a_nodisplay_entry_and_drop_a_hidden_one() {
 		let path = std::env::var("PATH").unwrap_or_default();
 		let exact = |mime: &str| vec![ mime.to_owned() ];
 
-		// satty's own byte traits — `NoDisplay=true`, the types, a `TryExec` that is there (a
-		// program every machine has, so the fixture's own rule is the one under test)
 		let satty = "\
 [Desktop Entry]
 Type=Application
@@ -945,13 +808,11 @@ TryExec=sh
 		let all = all_apps(&entries, &path);
 		assert_eq!(all.iter().map(|entry| entry.id.as_str()).collect::<Vec<_>>(), vec![ "satty.desktop" ], "and it stands in the full zone too");
 
-		// `Hidden=true` never gets this far: the parser drops it, so no list can offer it
 		assert!(
 			parse_entry("[Desktop Entry]\nType=Application\nName=Hidden\nExec=x\nHidden=true\nMimeType=image/png;\n", "hidden.desktop").is_none(),
 			"a hidden entry is no entry at all — hence absent from both zones"
 		);
 
-		// the rest of that machine's own `gio mime image/png` roster stands in the full zone
 		let roster = [
 			("imv.desktop", "imv"),
 			("imv-dir.desktop", "imv (directory)"),
@@ -975,7 +836,6 @@ TryExec=sh
 			assert!(all.iter().any(|entry| entry.id == id), "{id} stands in the full zone");
 		}
 
-		// and the machine's own satty, when it is there: the very evidence this was found on
 		if let Ok(text) = std::fs::read_to_string("/usr/share/applications/satty.desktop")
 			&& let Some(entry) = parse_entry(&text, "satty.desktop")
 			&& try_exec_ok(&entry, &path)

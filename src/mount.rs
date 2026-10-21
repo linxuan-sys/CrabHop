@@ -1,31 +1,17 @@
-//! The devices UDisks2 knows about (P17): listed, mounted and unmounted over the system bus with
-//! zbus — no subprocess, no `gio`, no shell.
-//!
-//! Everything the panel shows is a pure model: the bus's own dictionaries are read into [`Raw`],
-//! and `device_from` / `devices_from` / the badges and rows are plain functions a test can hand a
-//! dictionary to. The D-Bus calls themselves live at the bottom, on the blocking API, meant to be
-//! run on a worker thread.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
-/// One device as the panel reads it.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct Device {
-	/// The D-Bus object path of the block: what mount and unmount are called on.
 	pub id:    String,
-	/// What the row reads first: the label, or the device node when there is no label.
 	pub label: String,
-	/// The block device node (`/dev/nvme0n1p2`).
 	pub node:  String,
 	pub size:  u64,
-	/// The filesystem's short name (`ext4`), empty when the block holds none (a whole disk).
 	pub fs:    String,
-	/// Where it is mounted, when it is.
 	pub mounts: Vec<PathBuf>,
-	/// The drive's own properties, when the block names a drive.
 	pub ejectable: bool,
 	pub removable: bool,
 }
@@ -33,9 +19,6 @@ pub(crate) struct Device {
 impl Device {
 	pub(crate) fn mounted(&self) -> bool { !self.mounts.is_empty() }
 
-	/// The badge the row wears (P17's three states): a mounted device that can be ejected says
-	/// so, any other mounted one says where, and an unmounted one with a filesystem says it could
-	/// be. A block with no filesystem at all is not offered.
 	pub(crate) fn badge(&self) -> Option<(Badge, &'static str)> {
 		if self.mounted() {
 			return Some(if self.ejectable { (Badge::Ejectable, "可弹出") } else { (Badge::Mounted, "已挂载") });
@@ -47,8 +30,6 @@ impl Device {
 		Some((Badge::Mountable, "未挂载"))
 	}
 
-	/// The row the panel draws: left is the label and node, right is the filesystem, the size and
-	/// the badge — the four facts a device row carries.
 	pub(crate) fn row(&self) -> (String, String) {
 		let mut right = String::new();
 		if !self.fs.is_empty() {
@@ -71,8 +52,6 @@ impl Device {
 		(format!("{}  {}", self.label, self.node), right)
 	}
 
-	/// What the panel sorts by: the mounted ones first (they are where a person goes), then the
-	/// mountable ones, then by label.
 	pub(crate) fn order(&self) -> (u8, String) {
 		let rank = match self.badge() {
 			Some((Badge::Mounted | Badge::Ejectable, _)) => 0,
@@ -90,8 +69,6 @@ pub(crate) enum Badge {
 	Ejectable,
 }
 
-/// One block as the bus hands it over, before the model decides anything: the keys are UDisks2's
-/// own (IdLabel, IdType, Size, Device, PreferredDevice, MountPoints, Ejectable, Removable).
 #[derive(Clone, Default, PartialEq, Debug)]
 pub(crate) struct Raw {
 	pub id:        String,
@@ -105,8 +82,6 @@ pub(crate) struct Raw {
 	pub removable: bool,
 }
 
-/// One raw block into the model, if it is worth a row: something mounted, or something with a
-/// filesystem to mount. A bare disk with neither is not a place to go.
 pub(crate) fn device_from(raw: Raw) -> Option<Device> {
 	let node = if raw.node.is_empty() { raw.preferred.clone() } else { raw.node.clone() };
 	if node.is_empty() && raw.mounts.is_empty() {
@@ -134,7 +109,6 @@ pub(crate) fn device_from(raw: Raw) -> Option<Device> {
 	})
 }
 
-/// The whole list, in the panel's own order.
 pub(crate) fn devices_from(raws: Vec<Raw>) -> Vec<Device> {
 	let mut devices: Vec<Device> = raws.into_iter().filter_map(device_from).collect();
 	devices.sort_by_key(Device::order);
@@ -142,8 +116,6 @@ pub(crate) fn devices_from(raws: Vec<Raw>) -> Vec<Device> {
 	devices
 }
 
-/// The device a path stands on: the one whose mount point is the path itself or its longest
-/// ancestor (a directory on `/home` is on the `/home` device, not on `/`).
 pub(crate) fn device_of<'a>(devices: &'a [Device], path: &Path) -> Option<&'a Device> {
 	devices
 		.iter()
@@ -151,11 +123,8 @@ pub(crate) fn device_of<'a>(devices: &'a [Device], path: &Path) -> Option<&'a De
 		.max_by_key(|device| device.mounts.iter().map(|at| at.components().count()).max().unwrap_or(0))
 }
 
-// ---- the bus itself: blocking calls, meant for a worker thread ----
-
 const SERVICE: &str = "org.freedesktop.UDisks2";
 
-/// Every block UDisks2 manages, read through the object manager.
 pub(crate) fn list() -> Result<Vec<Device>, String> {
 	let connection = zbus::blocking::Connection::system().map_err(wire)?;
 	let manager = zbus::blocking::Proxy::new(
@@ -172,7 +141,6 @@ pub(crate) fn list() -> Result<Vec<Device>, String> {
 	for (path, interfaces) in objects {
 		let Some(block) = interfaces.get("org.freedesktop.UDisks2.Block") else { continue };
 		let Some(usage) = text(block, "IdUsage") else { continue };
-		// a block that holds no filesystem and manages none in particular is not a destination
 		if usage != "filesystem" && text(block, "IdType").is_none() {
 			continue;
 		}
@@ -196,7 +164,6 @@ pub(crate) fn list() -> Result<Vec<Device>, String> {
 	Ok(devices_from(raws))
 }
 
-/// Mount the device; the answer is where it landed.
 pub(crate) fn mount(id: &str) -> Result<PathBuf, String> {
 	let connection = zbus::blocking::Connection::system().map_err(wire)?;
 	let filesystem = proxy(&connection, id, "org.freedesktop.UDisks2.Filesystem")?;
@@ -206,7 +173,6 @@ pub(crate) fn mount(id: &str) -> Result<PathBuf, String> {
 	Ok(PathBuf::from(at))
 }
 
-/// Unmount the device — and eject the drive it lives on, when asked and when it has one.
 pub(crate) fn unmount(id: &str, force: bool, eject: bool) -> Result<(), String> {
 	let connection = zbus::blocking::Connection::system().map_err(wire)?;
 	let filesystem = proxy(&connection, id, "org.freedesktop.UDisks2.Filesystem")?;
@@ -222,7 +188,6 @@ pub(crate) fn unmount(id: &str, force: bool, eject: bool) -> Result<(), String> 
 		if !drive.as_str().is_empty() && drive.as_str() != "/" {
 			let drive = proxy(&connection, drive.as_str(), "org.freedesktop.UDisks2.Drive")?;
 			let options: HashMap<&str, Value<'_>> = HashMap::new();
-			// an eject that is refused is not worth undoing the unmount over
 			let _ = drive.call::<_, _, ()>("Eject", &(options));
 		}
 	}
@@ -240,12 +205,10 @@ fn proxy<'a>(
 
 fn wire(error: zbus::Error) -> String { format!("{error}") }
 
-/// A string property, when the bus carries one.
 fn text(map: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
 	map.get(key).and_then(|value| String::try_from(value.clone()).ok())
 }
 
-/// A byte-array property read as text: UDisks2's device nodes are `ay`, not `s`.
 fn bytes(map: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
 	let bytes = map.get(key).and_then(|value| Vec::<u8>::try_from(value.clone()).ok())?;
 
@@ -260,7 +223,6 @@ fn flag(map: &HashMap<String, OwnedValue>, key: &str) -> bool {
 	map.get(key).is_some_and(|value| bool::try_from(value.clone()).unwrap_or(false))
 }
 
-/// The mount points of a filesystem interface: `aay`, each a path's own bytes.
 fn mounts_of(map: &HashMap<String, OwnedValue>) -> Vec<PathBuf> {
 	let Some(value) = map.get("MountPoints") else { return Vec::new() };
 
@@ -276,8 +238,6 @@ mod tests {
 	use super::*;
 	use crate::list;
 
-	/// The three badges: a mounted ejectable drive says so, another mounted device says where, and
-	/// an unmounted one with a filesystem says it could be mounted. A bare disk is not offered.
 	#[test]
 	fn the_badges_read_the_states_a_person_cares_about() {
 		let mut device = Device {
@@ -303,8 +263,6 @@ mod tests {
 		assert_eq!(device.badge(), None, "nothing to mount and nowhere mounted: not a destination");
 	}
 
-	/// A block becomes a device when it is mounted or has a filesystem; a whole disk with neither
-	/// is left out, a label falls back to the node's own name, and `ay` fields read as text.
 	#[test]
 	fn a_raw_block_becomes_a_row_when_there_is_somewhere_to_go() {
 		let root = Raw {
@@ -328,8 +286,6 @@ mod tests {
 		assert_eq!(device.badge(), Some((Badge::Mountable, "未挂载")));
 	}
 
-	/// The panel's order: the mounted ones first, then the mountable, each by label — and the row
-	/// carries the four facts the design asks for.
 	#[test]
 	fn the_list_orders_mounted_first_and_the_row_carries_its_facts() {
 		let devices = devices_from(vec![
@@ -350,8 +306,6 @@ mod tests {
 		assert!(right.contains("未挂载") && !right.contains("已挂载"), "the usb stick is not mounted: {right}");
 	}
 
-	/// Which device a path stands on: the longest matching mount point wins, so a directory under
-	/// `/home` is on the `/home` device rather than the root one.
 	#[test]
 	fn a_path_stands_on_its_longest_mount() {
 		let devices = devices_from(vec![

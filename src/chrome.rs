@@ -1,45 +1,28 @@
-//! The window's chrome, kept pure: where the three columns are, what a separator drag does to
-//! their shares, the skeleton's deterministic rows, the overlay scrollbar's thumb, and the
-//! permission string the status bar colours. No painter here — this is the arithmetic the
-//! spec's §1.3/§2.1/§2.2/§2.5 are, so it can be read and tested without a window.
 
 use eframe::egui::{Painter, Pos2, Rect, Vec2, pos2, vec2};
 
-/// The chart of heights the spec lays down: a 36px tab bar, a 28px status bar between which the
-/// three columns live (§2.1).
 pub(crate) const TAB_HEIGHT: f32 = 36.0;
 pub(crate) const STATUS_HEIGHT: f32 = 28.0;
 
-/// The narrow-window ladder: the parent column goes first, then the preview (§2.1).
 pub(crate) const HIDE_PARENT: f32 = 760.0;
 pub(crate) const HIDE_PREVIEW: f32 = 560.0;
 
-/// No column may be dragged into nothing, and the current column — the one a person operates —
-/// gets the larger floor.
 pub(crate) const MIN_COLUMN: f32 = 120.0;
 pub(crate) const MIN_CURRENT: f32 = 240.0;
 
-/// The separator's invisible hot zone: 3px either side of the 1px line (§2.2).
 pub(crate) const SEP_ZONE: f32 = 7.0;
 
-/// The overlay scrollbar: 6px wide, at least 24px long, its right edge 2px inside the column
-/// (§3 总规则).
 pub(crate) const SCROLL_W: f32 = 6.0;
 pub(crate) const SCROLL_MIN: f32 = 24.0;
 pub(crate) const SCROLL_INSET: f32 = 2.0;
 
-/// One column of the three: a rectangle, and the divider it shares with its right neighbour.
 pub(crate) struct Columns {
 	pub parent:  Option<Rect>,
 	pub current: Rect,
 	pub preview: Option<Rect>,
-	/// The draggable boundaries: the x of the 1px line, and the two columns it sits between —
-	/// what a drag rewrites.
 	pub seps:    Vec<(f32, usize, usize)>,
 }
 
-/// The three columns of a body rect: the spec's 1:4:3 among whichever of them fit, and the
-/// boundaries a drag can move.
 pub(crate) fn columns(body: Rect, shares: [f32; 3]) -> Columns {
 	let parent = body.width() >= HIDE_PARENT;
 	let preview = body.width() >= HIDE_PREVIEW;
@@ -75,9 +58,6 @@ pub(crate) fn columns(body: Rect, shares: [f32; 3]) -> Columns {
 	Columns { parent: parent_rect, current: current_rect, preview: preview_rect, seps }
 }
 
-/// A drag of the boundary between two columns, in shares: the two sides give and take the pixels,
-/// and both are clamped so neither can be dragged into nothing. `visible` is which of the three
-/// columns the window is showing, and `body` the width the shares divide.
 pub(crate) fn resized(
 	shares: [f32; 3],
 	left: usize,
@@ -95,9 +75,6 @@ pub(crate) fn resized(
 	let right_px = if visible[right] { shares[right] / sum * body.width() } else { 0.0 };
 	let floor = |column: usize| if column == 1 { MIN_CURRENT } else { MIN_COLUMN };
 
-	// what the drag is allowed to be, both sides considered — and when the window is so narrow
-	// that both floors cannot hold at once, no drag can satisfy them: the shares stay put instead
-	// of a clamp whose bounds have crossed (which would panic)
 	let (low, high) = (floor(left) - left_px, right_px - floor(right));
 	let delta = if low <= high { delta.clamp(low, high) } else { 0.0 };
 
@@ -107,19 +84,14 @@ pub(crate) fn resized(
 	next
 }
 
-/// The skeleton's row count: what the directory held last time, or a plain dozen — and never more
-/// than the column can show (§1.3).
 pub(crate) fn skeleton_rows(hint: Option<usize>, visible: usize) -> usize {
 	hint.unwrap_or(12).clamp(1, visible.max(1))
 }
 
-/// The skeleton's bar width at a row, 40%–80% of the column. A fixed scramble of the row number:
-/// scattered, but the same every frame — the skeleton is static, and honest about it (§1.3).
 pub(crate) fn skeleton_bar(row: usize) -> f32 {
 	0.40 + ((row as u32).wrapping_mul(2_654_435_761) >> 10) as f32 % 41.0 / 100.0
 }
 
-/// The overlay scrollbar's thumb on its track, or nothing when the content fits.
 pub(crate) struct Bar {
 	pub track:  Rect,
 	pub thumb:  Rect,
@@ -127,7 +99,6 @@ pub(crate) struct Bar {
 	pub travel: f32,
 }
 
-/// Where the thumb sits for a scroll offset, in rows.
 pub(crate) fn bar(track: Rect, content: f32, visible: f32, offset: f32) -> Option<Bar> {
 	if content <= visible || content <= 0.0 || track.height() <= 0.0 {
 		return None;
@@ -144,7 +115,6 @@ pub(crate) fn bar(track: Rect, content: f32, visible: f32, offset: f32) -> Optio
 	Some(Bar { track, thumb, height, travel })
 }
 
-/// The offset a drag of the thumb asks for, from the pointer's y.
 pub(crate) fn dragged_offset(bar: &Bar, pointer_y: f32, content: f32, visible: f32) -> f32 {
 	if bar.travel <= 0.0 {
 		return 0.0;
@@ -154,8 +124,6 @@ pub(crate) fn dragged_offset(bar: &Bar, pointer_y: f32, content: f32, visible: f
 	at / bar.travel * (content - visible)
 }
 
-/// `rwxr-xr--`, the way a person reads a permission — and nine dashes when the platform has no
-/// bits to show. The status bar colours each character; this decides which ones are there.
 pub(crate) fn perm(mode: Option<u32>) -> [u8; 9] {
 	const DASH: u8 = b'-';
 	let Some(mode) = mode else {
@@ -183,8 +151,6 @@ pub(crate) fn perm(mode: Option<u32>) -> [u8; 9] {
 	out
 }
 
-/// One fade mask for the edges of an overflowing tab bar: `strips` slivers of a colour that
-/// thins out, drawn from the `edge` inwards (§2.4).
 pub(crate) fn fade_strips(bar: Rect, left: bool, colour: eframe::egui::Color32) -> Vec<(Rect, eframe::egui::Color32)> {
 	const WIDTH: f32 = 12.0;
 	const STRIPS: usize = 4;
@@ -202,13 +168,10 @@ pub(crate) fn fade_strips(bar: Rect, left: bool, colour: eframe::egui::Color32) 
 		.collect()
 }
 
-/// Where a pointer sits in the bar's own scrolled space: the tab drag and the wheel both ask.
 pub(crate) fn unscrolled(at: Pos2, screen: Rect, scroll: f32) -> Vec2 {
 	vec2(at.x - screen.min.x + scroll, at.y - screen.min.y)
 }
 
-/// The soft shadow an overlay carries (§4's container): egui's painter has no blur of its own, so
-/// three dark rings stand in for the spec's `0 8px 24px @35%`.
 pub(crate) fn shadow(painter: &Painter, rect: Rect, radius: f32) {
 	for (grow, alpha) in [ (18.0f32, 16u8), (11.0, 26), (5.0, 38) ] {
 		painter.rect_filled(
@@ -227,8 +190,6 @@ mod tests {
 		Rect::from_min_size(pos2(100.0, 40.0), vec2(width, 700.0))
 	}
 
-	/// 1:4:3, hiding the parent first and the preview second — and with each hidden the rest of
-	/// the width is still divided by the same rule (§2.1).
 	#[test]
 	fn the_three_columns_are_the_specs_ratio_until_the_window_narrows() {
 		let wide = columns(body(1280.0), [ 1.0, 4.0, 3.0 ]);
@@ -248,8 +209,6 @@ mod tests {
 		assert_eq!(tiny.seps.len(), 0);
 	}
 
-	/// A drag moves the boundary and clamps at both floors: what the two sides can give and take
-	/// is what the pointer can do.
 	#[test]
 	fn a_drag_moves_the_boundary_and_clamps_both_columns() {
 		let shares = [ 1.0, 4.0, 3.0 ];
@@ -270,9 +229,6 @@ mod tests {
 		assert!(right_px >= MIN_COLUMN - 0.5, "and the preview keeps its floor too: {right_px}");
 	}
 
-	/// A window narrower than the columns' floors: both floors cannot hold at once, so a drag —
-	/// even a nudge — leaves the shares exactly where they were instead of panicking on a clamp
-	/// whose bounds have crossed.
 	#[test]
 	fn a_drag_too_narrow_for_the_floors_keeps_the_shares() {
 		let shares = [ 1.0, 4.0, 3.0 ];
@@ -283,8 +239,6 @@ mod tests {
 		assert_eq!(resized(shares, 1, 2, -500.0, body, [ true; 3 ]), shares);
 	}
 
-	/// The skeleton's rows are a hint, then a dozen, and its bars stay between 40% and 80% and
-	/// never move — no shimmer (§1.3).
 	#[test]
 	fn the_skeleton_is_static_and_between_its_bounds() {
 		assert_eq!(skeleton_rows(Some(5), 20), 5);
@@ -297,8 +251,6 @@ mod tests {
 		assert_eq!(widths, (0..12).map(skeleton_bar).collect::<Vec<_>>(), "the same every frame");
 	}
 
-	/// The thumb is proportional, sits inside the track, and a drag on it asks for the offset
-	/// under the pointer.
 	#[test]
 	fn the_scrollbar_thumb_is_proportional_and_draggable() {
 		let track = Rect::from_min_size(pos2(600.0, 40.0), vec2(SCROLL_W, 600.0));
@@ -319,7 +271,6 @@ mod tests {
 		dragged_offset(bar, bar.track.min.y + at * bar.travel + bar.height * 0.5, content, visible)
 	}
 
-	/// The nine characters are the bits, in the order a person reads them.
 	#[test]
 	fn permissions_spell_the_bits_or_nothing() {
 		assert_eq!(perm(Some(0o754)), *b"rwxr-xr--");

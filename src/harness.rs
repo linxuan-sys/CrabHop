@@ -1,17 +1,3 @@
-//! The headless harness (P25): the window without a window. A replay or a screenshot is asked for
-//! by `CRABHOP_KEYS` / `CRABHOP_SHOT` as it always was — but instead of a real window, this builds
-//! its own egui context, hands it a synthetic `RawInput`, runs `App::frame` on it, tessellates on
-//! the CPU and paints into an offscreen texture with `egui_wgpu::Renderer`. `CRABHOP_SHOT`'s frames
-//! come out as PNGs through the app's own `request_screenshot` callbacks, completed from the
-//! read-back.
-//!
-//! Nothing here touches the user's session: no window, no surface, no compositor. RADV makes the
-//! device without one (the spike proved it), and `CRABHOP_HEADLESS=0` is the way back to a real
-//! window when a hand needs to see it.
-//!
-//! The sequence is the one the project's own acceptance already used: `cargo run` in a directory
-//! with `CRABHOP_KEYS="key j;key k;shot"` and `CRABHOP_SHOT=<prefix>` — the same steps, the same
-//! `Timing:` readings, the same `<prefix>-N.png` frames, and no window anywhere.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,8 +8,6 @@ use eframe::egui_wgpu::{self, wgpu};
 use crate::app::App;
 use crate::tokens::{Tokens, ROW_HEIGHT};
 
-/// Whether the headless path is the one to take: a replay is asked for, unless the caller says
-/// otherwise. A real window is then only for a person's own eyes (`CRABHOP_HEADLESS=0`).
 pub(crate) fn wanted() -> bool {
 	match std::env::var("CRABHOP_HEADLESS") {
 		Ok(asked) => asked != "0",
@@ -31,14 +15,12 @@ pub(crate) fn wanted() -> bool {
 	}
 }
 
-/// The frame's own size, in points: `CRABHOP_WINDOW` when it is set, the same default a window gets.
 fn size() -> [f32; 2] {
 	let size = crate::inner_size();
 
 	[ size[0], size[1] ]
 }
 
-/// Run the replay to its end, headless, and return how many frames were painted.
 pub(crate) fn run() -> usize {
 	let (device, queue) = device();
 	let format = wgpu::TextureFormat::Rgba8Unorm;
@@ -48,7 +30,6 @@ pub(crate) fn run() -> usize {
 	let mut session = Session::new(ctx, device, queue, format, size(), seed());
 
 	let steps = session.steps();
-	// one replay step every 350ms — the app's own cadence — plus the tail the shots need
 	let frames = 40 + steps * 24;
 	for _ in 0..frames {
 		session.paint();
@@ -58,8 +39,6 @@ pub(crate) fn run() -> usize {
 	session.frames
 }
 
-/// A headless window: the device, the context, the app and the offscreen target. Kept in one place
-/// so the tests can drive it frame by frame.
 pub(crate) struct Session {
 	pub(crate) ctx:   egui::Context,
 	pub(crate) app:   App,
@@ -71,32 +50,14 @@ pub(crate) struct Session {
 	readback:         wgpu::Buffer,
 	padded:           u32,
 	size:             [u32; 2],
-	/// The device's own texture ceiling, put into every frame's input the way eframe puts the
-	/// window's: egui's default of 2048 would refuse a tall picture's upload that the real window
-	/// accepts (P28's parity fix — the harness must be able to show what the window shows).
 	texture_side:     usize,
 	pub(crate) frames: usize,
 	started:          Instant,
-	/// A click the next frame should receive (P33⑮⑯'s harness reading of the mouse): the press and
-	/// the release egui needs, in one frame, at the point a test asks for.
 	click:            Option<egui::Pos2>,
-	/// A pointer move the next frame should receive (P33②): a chip's × only exists once the chip
-	/// is hovered, and hover settles a frame late — the move frame stands before the press, the
-	/// way a hand's pointer does.
 	moved:            Option<egui::Pos2>,
-	/// Whether any frame has asked the window to close (P33⑯), read back by the test that presses
-	/// the corner's ×.
 	closed:           bool,
-	/// What the last frame handed the platform for the IME (P33⑤): the field's box and the
-	/// caret's column, as the candidate window's place — the tests read the very value eframe
-	/// would pass on to winit.
 	ime:              Option<egui::output::IMEOutput>,
-	/// Raw events the next frame should receive (P35②), verbatim: what the window's own
-	/// integration hands over — `Event::Copy`/`Cut`/`Paste` for the clipboard chords, which a
-	/// real window never spells as key events.
 	injected:         Vec<egui::Event>,
-	/// The last text a frame put on the clipboard (`OutputCommand::CopyText`), for the tests
-	/// that follow a field's own Ctrl+C (P35②).
 	copied:           Option<String>,
 }
 
@@ -122,7 +83,6 @@ impl Session {
 		});
 		let view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
-		// row reads come back padded to 256 bytes (the same arithmetic every picture book uses)
 		let padded = (width * 4).div_ceil(256) * 256;
 		let readback = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("harness-readback"),
@@ -132,8 +92,6 @@ impl Session {
 		});
 
 		ctx.set_pixels_per_point(1.0);
-		// the harness never touches the session's own clipboard (P35④): the yank's offers are off,
-		// and the text road carries every assertion
 		let mut app = App::with_context(ctx.clone(), seed);
 		app.set_uri_offers_for_tests(false);
 
@@ -166,9 +124,6 @@ impl Session {
 		std::env::var("CRABHOP_KEYS").map(|keys| keys.split(';').filter(|s| !s.is_empty()).count()).unwrap_or(0)
 	}
 
-	/// One frame: the app's own ui, then the picture, then whatever `request_screenshot` asked for.
-	/// A click a test asked for (P33⑮⑯): the pointer's move, its press and its release, in one
-	/// frame — the same events a real mouse sends, in the same order.
 	fn input_events(&mut self) -> Vec<egui::Event> {
 		let mut events = std::mem::take(&mut self.injected);
 
@@ -186,8 +141,6 @@ impl Session {
 		events
 	}
 
-	/// Whether a frame's output asked the window to close (P33⑯) — read while the output is still
-	/// whole, before its shapes are moved into the tessellator.
 	fn asked_to_close(out: &egui::FullOutput) -> bool {
 		out.viewport_output
 			.values()
@@ -214,7 +167,6 @@ impl Session {
 		}
 		let primitives = self.ctx.tessellate(out.shapes, out.pixels_per_point);
 
-		// a frame that asked for a screenshot: the callbacks are answered from this very read-back
 		let asked: Vec<egui::ScreenshotCallback> = out
 			.viewport_output
 			.values()
@@ -230,7 +182,6 @@ impl Session {
 			callback.complete(Arc::new(image.clone()));
 		}
 
-		// the texture deltas are the app's (and epaint's guard insists they are handled)
 		for (id, deltas) in &out.textures_delta.set {
 			for delta in deltas {
 				self.renderer.update_texture(&self.device, &self.queue, *id, delta);
@@ -242,7 +193,6 @@ impl Session {
 		crate::metrics::frame(1.0 / 60.0);
 	}
 
-	/// Paint the primitives into the offscreen texture and read the pixels back.
 	fn render(&mut self, primitives: &[egui::ClippedPrimitive]) -> egui::ColorImage {
 		let screen = egui_wgpu::ScreenDescriptor { size_in_pixels: self.size, pixels_per_point: 1.0 };
 		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("harness") });
@@ -267,7 +217,6 @@ impl Session {
 				occlusion_query_set: None,
 				multiview_mask: None,
 			});
-			// the lifetime is forgotten the way eframe forgets it: the pass never sees the encoder
 			self.renderer.render(&mut pass.forget_lifetime(), primitives, &screen);
 		}
 
@@ -312,14 +261,11 @@ impl Session {
 		egui::ColorImage::new([ self.size[0] as usize, self.size[1] as usize ], pixels)
 	}
 
-	/// Where the cursor stands, for a test that watches a replay step move it (P25).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn cursor(&self) -> usize {
 		self.app.cursor_for_tests()
 	}
 
-	/// Paint frames until the listing holds at least `want` rows, and say whether it got there
-	/// (P25's flake fix): the replay's own cadence is not something a test may lean on.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn wait_for_list(&mut self, want: usize, frames: usize) -> bool {
 		for _ in 0..frames {
@@ -333,40 +279,31 @@ impl Session {
 		self.app.listed() >= want
 	}
 
-	/// One painted frame as a picture, for the tests to read: paint, then take the pixels.
-	/// Queue a click for the next frame (P33⑮⑯): the point in the window a test's pointer presses.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn click_at(&mut self, at: egui::Pos2) {
 		self.click = Some(at);
 	}
 
-	/// Queue a bare pointer move for the next frame (P33②): what a real hand does before a press —
-	/// and what a chip needs before its × exists for the mouse to hit.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn move_at(&mut self, at: egui::Pos2) {
 		self.moved = Some(at);
 	}
 
-	/// Whether any frame so far has asked the window to close (P33⑯).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn close_requested(&self) -> bool {
 		self.closed
 	}
 
-	/// What the last frame handed the platform for the IME (P33⑤).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn ime_for_tests(&self) -> Option<egui::output::IMEOutput> {
 		self.ime
 	}
 
-	/// Hand the next frame the very events a real window's integration would (P35②): the
-	/// clipboard chords arrive as `Event::Copy` / `Event::Cut` / `Event::Paste`, never as keys.
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn inject(&mut self, events: Vec<egui::Event>) {
 		self.injected.extend(events);
 	}
 
-	/// The last text a frame put on the clipboard (P35②'s field-side assertion).
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn copied_for_tests(&self) -> Option<String> {
 		self.copied.clone()
@@ -404,14 +341,12 @@ impl Session {
 	}
 }
 
-/// The replay steps, from the environment — the same corpus every acceptance run has used.
 fn seed() -> Vec<String> {
 	std::env::var("CRABHOP_KEYS")
 		.map(|keys| keys.split(';').map(|step| step.trim().to_owned()).filter(|step| !step.is_empty()).collect())
 		.unwrap_or_default()
 }
 
-/// A device without a surface: RADV answers, and nothing needs a window or a compositor.
 pub(crate) fn device() -> (wgpu::Device, wgpu::Queue) {
 	let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
 		backends: wgpu::Backends::all(),
@@ -441,7 +376,6 @@ pub(crate) fn device() -> (wgpu::Device, wgpu::Queue) {
 	.expect("no device")
 }
 
-/// The async calls, driven on this thread: the runtime is the crate's own dependency already.
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
 	tokio::runtime::Builder::new_current_thread()
 		.enable_all()
@@ -450,7 +384,6 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
 		.block_on(future)
 }
 
-/// How tall the middle column's rows are, for a test that reads a cursor's move out of pixels.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const fn row_height() -> f32 { ROW_HEIGHT }
 
@@ -460,12 +393,7 @@ mod tests {
 
 	use super::*;
 
-	/// One headless window for a test: a device, the fonts, the app and a size that shows all
-	/// three columns.
 	fn session(seed: Vec<String>) -> Session {
-		// the window's own config is nobody's fixture: every session runs on the default shares and
-		// writes whatever a drag makes into a directory of its own (the person's own file stays out
-		// of the way of the tests, and the tests stay out of the way of it)
 		crate::config::config_dir_for_tests(
 			std::env::temp_dir().join(format!("crabhop-config-{}", std::process::id())).join("crabhop"),
 		);
@@ -477,7 +405,6 @@ mod tests {
 		Session::new(ctx, device, queue, wgpu::TextureFormat::Rgba8Unorm, [ 1200.0, 800.0 ], seed)
 	}
 
-	/// How many pixels of a band are anything but the window's flat background.
 	fn lit(image: &egui::ColorImage, rect: egui::Rect) -> usize {
 		let mut count = 0;
 		for y in (rect.min.y.max(0.0) as usize)..(rect.max.y.min(image.size[1] as f32) as usize) {
@@ -491,20 +418,13 @@ mod tests {
 		count
 	}
 
-	/// The top of the row band the cursor stands on, read one pixel in from the middle column's
-	/// left edge — past the two-pixel accent mark, which is not the only accent in the frame.
 	fn cursor_row(image: &egui::ColorImage, x: usize) -> Option<usize> {
 		let cursor_bg = Tokens::MOCHA.cursor_bg;
 		(40..image.size[1] - 40).find(|y| image.pixels[y * image.size[0] + x] == cursor_bg)
 	}
 
-	/// The global four land where the table says (P21): with the list holding the keyboard Ctrl+A
-	/// marks every row on show; inside a field Ctrl+A is the text's own select-all, so what is
-	/// typed next starts the field over.
 	#[test]
 	fn the_global_ctrl_a_is_the_list_or_the_field_that_has_the_keyboard() {
-		// the listing first, and only then the key: a replay's own cadence is not something a test
-		// may lean on (the flake the P21 gate caught)
 		let mut list = session(Vec::new());
 		assert!(list.wait_for_list(2, 200), "the listing has to land");
 		list.app.rehearse(vec![ "key C-a".to_owned() ]);
@@ -519,7 +439,6 @@ mod tests {
 		assert!(list.app.listed() > 1, "the test needs a listing to select");
 		assert_eq!(list.app.selected_count(), list.app.listed(), "every row on show is selected");
 
-		// the field's own four steps, waited out one by one rather than by a frame count
 		let mut field = session(Vec::new());
 		field.app.rehearse(vec![
 			"key f".to_owned(),
@@ -542,10 +461,6 @@ mod tests {
 		);
 	}
 
-	/// A picture's display ratio moves with a zoom (P27①'s rule stands): the fit reads the
-	/// column's width against the file's own — 133% for a 320px file in this column — and a step
-	/// puts the same ratio times 1.25 on the badge, the very string the panel shows a person and
-	/// the log carries a replay.
 	#[test]
 	fn a_zoom_moves_the_display_ratio_the_badge_shows() {
 		let at = std::env::temp_dir().join(format!("crabhop-zoom-{}.png", std::process::id()));
@@ -555,7 +470,6 @@ mod tests {
 
 		let mut session = session(vec![ format!("reveal {}", at.display()), "hover 900 400".to_owned() ]);
 
-		// the fit's own label has to be up before the zoom means anything
 		let mut fit: Option<String> = None;
 		for _ in 0..240 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -566,8 +480,6 @@ mod tests {
 			}
 		}
 		let fit = fit.expect("the picture has to be on screen");
-		// the ratio the fit must read: the column's own content width against the file's 320, from
-		// the layout the session actually got — never from a number typed into the test
 		let (body, shares) = session.app.layout();
 		let content = crate::preview::content_of(chrome::columns(body, shares).preview.expect("three columns"));
 		let percent = |scale: f32| ((content.width() * scale / 320.0 * 100.0).round().max(1.0)) as u32;
@@ -591,8 +503,6 @@ mod tests {
 		let _ = std::fs::remove_file(&at);
 	}
 
-	/// `g t` opens the bin as a tab of its own (P27): the chip says 回收站, the keymap keeps its say
-	/// inside it — Escape no longer closes it — and a `leave` walks away from it, the tab staying.
 	#[test]
 	fn the_bin_is_a_tab_the_keymap_still_works_in() {
 		let mut session = session(Vec::new());
@@ -612,7 +522,6 @@ mod tests {
 		assert_eq!(session.app.tab_name_for_tests(1), "回收站", "the chip is the bin's own word");
 		assert!(session.app.bin_cursor_for_tests().is_some(), "and the preview column knows what stands");
 
-		// Escape no longer means "close" (P27): the tab is still the bin's own
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
 		for _ in 0..40 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -620,7 +529,6 @@ mod tests {
 		}
 		assert!(session.app.in_bin_for_tests(), "Escape is not the bin's own anymore");
 
-		// a `leave` walks away: the tab stays where it was, the bin is behind it
 		session.app.rehearse(vec![ "key h".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -634,10 +542,6 @@ mod tests {
 		assert_eq!(session.app.tabs_for_tests(), 2, "and the tab it lived in is still there");
 	}
 
-	/// P33②: with the bin standing as a tab of its own, another chip's × still closes that chip.
-	/// The mouse path is walked the way a hand walks it — the pointer moves onto the chip, hover
-	/// settles a frame later (that is when the × exists at all), and then the press lands. The
-	/// boxes come from the frame that drew them; the state is what the test reads back.
 	#[test]
 	fn the_other_chips_x_still_closes_while_the_bin_stands() {
 		let mut s = session(Vec::new());
@@ -654,7 +558,6 @@ mod tests {
 		assert!(s.app.in_bin_for_tests(), "`g t` opened the bin tab");
 		assert_eq!(s.app.tabs_for_tests(), 2, "two chips stand");
 
-		// the pointer walks onto the first chip (the directory's own — the bin is the active one)
 		let chip = s.app.tab_chip_hit_for_tests(0).expect("the frame drew the first chip");
 		s.move_at(egui::pos2(chip.max.x - 8.0, chip.center().y));
 		s.shoot();
@@ -670,9 +573,6 @@ mod tests {
 		assert!(s.app.in_bin_for_tests(), "and the bin's tab is the one left standing");
 	}
 
-	/// The same × answers on a chip the window is not standing on, with no bin in sight (P33②): the
-	/// handler used to sit behind the frame's own hover, which collapses onto the very widget the
-	/// click is delivered to — an inactive chip's × could never read its own click.
 	#[test]
 	fn an_inactive_chips_x_closes_it_without_a_bin_too() {
 		let mut s = session(Vec::new());
@@ -688,7 +588,6 @@ mod tests {
 		}
 		assert_eq!(s.app.tabs_for_tests(), 2, "t t made the second tab");
 
-		// the pointer walks onto the first chip, hover settles, and the press lands on its ×
 		let chip = s.app.tab_chip_hit_for_tests(0).expect("the frame drew the first chip");
 		s.move_at(egui::pos2(chip.max.x - 8.0, chip.center().y));
 		s.shoot();
@@ -703,18 +602,12 @@ mod tests {
 		assert_eq!(s.app.tabs_for_tests(), 1, "the inactive chip's × closed it");
 	}
 
-	/// P33⑤: while one of the window's own fields holds the keyboard, every frame anchors the
-	/// platform's IME cursor area at that field — its box and the caret's column — where egui
-	/// only knows its own `TextEdit`. The filter strip proves the plain field, and the index
-	/// panel both halves of its machine: the list holds the keyboard and nothing anchors, the
-	/// box takes it and the anchor appears.
 	#[test]
 	fn a_focused_field_anchors_the_ime_cursor_area() {
 		let mut s = session(Vec::new());
 		s.shoot();
 		assert!(s.ime_for_tests().is_none(), "no field holds the keyboard at rest");
 
-		// `f` opens the filter strip at the window's foot: the anchor lands at its own box
 		s.app.rehearse(vec![ "key f".to_owned() ]);
 		let mut anchored = None;
 		for _ in 0..60 {
@@ -736,7 +629,6 @@ mod tests {
 			ime.rect
 		);
 
-		// Escape puts the strip away, and the anchor goes with it
 		s.app.rehearse(vec![ "key Esc".to_owned() ]);
 		for _ in 0..40 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -747,7 +639,6 @@ mod tests {
 		}
 		assert!(s.ime_for_tests().is_none(), "no field, no anchor");
 
-		// the index opens on the list: the list holds the keyboard, nothing anchors
 		s.app.rehearse(vec![ "key i".to_owned() ]);
 		for _ in 0..60 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -762,7 +653,6 @@ mod tests {
 		}
 		assert!(s.ime_for_tests().is_none(), "with the list holding the keyboard, no anchor stands");
 
-		// a second `i` steps into the box: the anchor appears at the query line
 		s.app.rehearse(vec![ "key i".to_owned() ]);
 		let mut inside = None;
 		for _ in 0..60 {
@@ -778,11 +668,6 @@ mod tests {
 		assert!(ime.rect.min.y < body.max.y, "the anchor is the panel's query line, above the strip: {:?}", ime.rect);
 	}
 
-	/// P33③: the bin's rows are placed by their place in the viewport, not by their place in the
-	/// bin — the two only agree at the top, and a scrolled bin used to draw every row `first`
-	/// rows too low: the viewport's top row went bare at once, and a deep scroll left the column
-	/// empty altogether. The wheel walks the list to the last page and back, and every row band
-	/// that should hold a row holds ink — at the top, at the bottom, and home again.
 	#[test]
 	fn the_bins_rows_keep_their_places_bottom_and_back() {
 		let mut s = session(Vec::new());
@@ -798,13 +683,10 @@ mod tests {
 		}
 		assert!(s.app.in_bin_for_tests(), "`g t` opened the bin tab");
 
-		// a bin of the test's own (P33③'s seam): sixty rows against the twenty-two the column shows
 		s.app.bin_fill_for_tests(60);
 		s.shoot();
 		s.shoot();
 
-		// every band that should hold a row holds ink: the icon slot and the name start inside it.
-		// The column's own count: what the last frame made of the viewport
 		let bands_with_ink = |s: &mut Session| -> (usize, usize) {
 			let image = s.shoot();
 			let (body, shares) = s.app.layout();
@@ -839,12 +721,9 @@ mod tests {
 			}
 		};
 
-		// the top: every band is a row
 		let (lit, rows) = bands_with_ink(&mut s);
 		assert_eq!(lit, rows, "at the top, every band holds a row");
 
-		// the wheel walks to the last page — the offset follows its target now, and the deep
-		// view still shows rows: this is where the whole column used to be blank
 		s.app.rehearse(vec![ "wheel -30".to_owned(), "wheel -30".to_owned(), "wheel -30".to_owned() ]);
 		wait_settled(&mut s, (60 - rows) as f32);
 		let (offset, target, _, len) = s.app.bin_scroll_for_tests().expect("the bin's scroll");
@@ -853,7 +732,6 @@ mod tests {
 		let (lit, rows) = bands_with_ink(&mut s);
 		assert_eq!(lit, rows, "at the bottom, every band still holds a row");
 
-		// and home again: the same count of rows, from the same place
 		s.app.rehearse(vec![ "wheel 30".to_owned(), "wheel 30".to_owned(), "wheel 30".to_owned() ]);
 		wait_settled(&mut s, 0.0);
 		let (offset, _, rows_after, len) = s.app.bin_scroll_for_tests().expect("the bin's scroll");
@@ -863,13 +741,8 @@ mod tests {
 		assert_eq!(lit, rows, "and every band holds a row again");
 	}
 
-	/// P33⑧: the left column answers the pointer like the middle one does — a click seats its own
-/// cursor, the wheel walks its own scroll — and the keyboard's column (the middle one) is not
-/// what decides any of it: the pointer's own column is. Both are read back as state, and the
-/// highlight's move is read off the pixels.
 #[test]
 fn the_parent_column_answers_the_mouse() {
-	// a sandbox: forty entries and the directory the test stands in
 	let root = std::env::temp_dir().join(format!("crabhop-parent-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(root.join("inside")).expect("a sandbox");
@@ -888,7 +761,6 @@ fn the_parent_column_answers_the_mouse() {
 	}
 	assert_eq!(s.app.cwd_for_tests(), root.join("inside"), "the reveal stands inside the sandbox: {:?}", s.app.cwd_for_tests());
 
-	// the column has to have drawn its own reading: the sandbox's listing
 	let (mut rows, mut len) = (0usize, 0usize);
 	for _ in 0..120 {
 		let (_, _, drawn_rows, listed) = s.app.parent_mouse_for_tests();
@@ -902,8 +774,6 @@ fn the_parent_column_answers_the_mouse() {
 	assert_eq!(len, 41, "the parent column holds the sandbox: forty files and `inside`");
 	assert!(len > rows, "and the listing is longer than the column: {len} > {rows}");
 
-	// the pointer over the left column: the wheel walks the left column's own scroll — settled
-	// to the last page — and the middle column's list never hears it
 	let (body, shares) = s.app.layout();
 	let parent = chrome::columns(body, shares).parent.expect("all three columns at this width");
 	s.app.rehearse(vec![ format!("hover {} {}", parent.center().x, parent.min.y + 60.0), "wheel -60".to_owned() ]);
@@ -919,7 +789,6 @@ fn the_parent_column_answers_the_mouse() {
 	assert!((offset - (len - rows) as f32).abs() < 0.001, "the left column's scroll settled at the last page: {offset}");
 	assert_eq!(s.app.scroll_offset_for_tests(), 0, "the middle column's list did not move");
 
-	// and back to the head: the column's own reading — the cwd's row — stands highlighted there
 	s.app.rehearse(vec![ "wheel 60".to_owned(), "wheel 60".to_owned() ]);
 	for _ in 0..240 {
 		std::thread::sleep(Duration::from_millis(16));
@@ -930,8 +799,6 @@ fn the_parent_column_answers_the_mouse() {
 	}
 	assert!(s.app.parent_mouse_for_tests().1 < 0.001, "the wheel walks back to the head too");
 
-	// a click seats the left column's own cursor on the row it landed on — the middle column's
-	// cursor and scroll are still its own
 	let before_middle = s.app.cursor_for_tests();
 	let image = s.shoot();
 	let cursor_x = parent.min.x as usize + 6;
@@ -959,16 +826,11 @@ fn the_parent_column_answers_the_mouse() {
 	let _ = std::fs::remove_dir_all(&root);
 }
 
-/// P33⑩: `Space` toggles the row the cursor stands on in and out of the selection; `j`/`k` walk
-/// without touching what is selected; the status bar wears the SELECT badge while anything
-/// stands selected, and Escape clears it. The selection is read off the state and the badge off
-/// the pixels (its fill is the `warn` block, where NORMAL's is `accent`).
 #[test]
 fn space_toggles_the_selection_and_escape_clears_it() {
 	let mut s = session(Vec::new());
 	assert!(s.wait_for_list(2, 200), "the listing has to land");
 
-	// the badge's own block, in the status bar: `warn` before anything, `accent` after
 	let warn_in_badge = |s: &mut Session| -> usize {
 		let image = s.shoot();
 		let mut count = 0;
@@ -992,7 +854,6 @@ fn space_toggles_the_selection_and_escape_clears_it() {
 	assert_eq!(s.app.selection_for_tests().len(), 0, "nothing is selected at rest");
 	assert_eq!(warn_in_badge(&mut s), 0, "and the badge is NORMAL's own");
 
-	// ① Space seats the cursor's row in; a second Space takes it out again
 	walk(&mut s, &[ "key Space" ]);
 	assert_eq!(s.app.selection_for_tests().len(), 1, "Space selected the cursor's row");
 	assert!(warn_in_badge(&mut s) > 0, "and the badge turned SELECT");
@@ -1000,7 +861,6 @@ fn space_toggles_the_selection_and_escape_clears_it() {
 	walk(&mut s, &[ "key Space" ]);
 	assert_eq!(s.app.selection_for_tests().len(), 0, "Space again took it out");
 
-	// ② three rows in a row, walking with `j` in between — and `k` back loses nothing
 	walk(&mut s, &[ "key Space", "key j", "key Space", "key j", "key Space" ]);
 	assert_eq!(s.cursor(), 2, "the cursor walked with the selections");
 	assert_eq!(s.app.selection_for_tests().len(), 3, "three rows stand selected");
@@ -1008,16 +868,11 @@ fn space_toggles_the_selection_and_escape_clears_it() {
 	assert_eq!(s.cursor(), 0, "the cursor walked back up");
 	assert_eq!(s.app.selection_for_tests().len(), 3, "and the selection was not lost on the way");
 
-	// ③ Escape clears it, and the badge goes back to NORMAL
 	walk(&mut s, &[ "key Esc" ]);
 	assert_eq!(s.app.selection_for_tests().len(), 0, "Escape cleared the selection");
 	assert_eq!(warn_in_badge(&mut s), 0, "and the badge is NORMAL's own again");
 }
 
-/// P33⑪: the global Ctrl names — no new bindings — are selection-aware: with anything selected
-/// they act on the whole set, with nothing selected on the cursor's row. `Ctrl+C` / `Ctrl+X`
-/// fill the yank (copy or cut), `Ctrl+V` pastes the held set into the window's own directory,
-/// and a held cut moves the bytes rather than copying them.
 #[test]
 fn the_global_ctrl_names_act_on_the_selection_or_the_cursor_row() {
 	let root = std::env::temp_dir().join(format!("crabhop-ctrl-{}", std::process::id()));
@@ -1045,12 +900,10 @@ fn the_global_ctrl_names_act_on_the_selection_or_the_cursor_row() {
 	}
 	assert_eq!(s.app.cwd_for_tests(), root, "the window stands in the sandbox");
 
-	// nothing selected: `Ctrl+C` takes the cursor's own row
 	walk(&mut s, &[ "key C-c" ]);
 	assert_eq!(s.app.yank_paths_for_tests(), vec![ root.join("a.txt") ], "the cursor's row alone");
 	assert!(!s.app.yank_cut_for_tests(), "a copy, not a cut");
 
-	// two rows selected: `Ctrl+X` takes the whole set, as a cut
 	walk(&mut s, &[ "key Space", "key j", "key Space" ]);
 	assert_eq!(s.app.selection_for_tests(), vec![ root.join("a.txt"), root.join("b.txt") ], "two rows stand selected");
 	walk(&mut s, &[ "key C-x" ]);
@@ -1061,7 +914,6 @@ fn the_global_ctrl_names_act_on_the_selection_or_the_cursor_row() {
 	);
 	assert!(s.app.yank_cut_for_tests(), "and it is a cut");
 
-	// and `Ctrl+V` in another directory pastes the held set: a cut moves the bytes
 	walk(&mut s, &[ "key Esc" ]);
 	walk(&mut s, &[ &format!("reveal {}", root.join("dst/seed.txt").display()) ]);
 	for _ in 0..120 {
@@ -1086,10 +938,6 @@ fn the_global_ctrl_names_act_on_the_selection_or_the_cursor_row() {
 	let _ = std::fs::remove_dir_all(&root);
 }
 
-/// P33⑫: the change-type tasks leave an undo behind — the same action on a ten-deep stack and
-/// on the toast's own button (`u` and `Ctrl+Z` take the stack's newest) — and the semantics
-/// table holds: a link is taken away, a rename goes back, a cut-paste walks home. Nothing on
-/// the stack is nothing said.
 #[test]
 fn the_undo_takes_the_change_type_tasks_back() {
 	let root = std::env::temp_dir().join(format!("crabhop-undo-{}", std::process::id()));
@@ -1135,8 +983,6 @@ fn the_undo_takes_the_change_type_tasks_back() {
 	assert!(stands_at(&mut s, &root.join("sub")), "the window stands in the sandbox's subdirectory");
 	assert!(s.app.undo_labels_for_tests().is_empty(), "and the stack is empty at rest");
 
-	// ① a link: `L` opens the panel, `)` chooses the absolute one, Enter takes it — the prompt
-	// comes prefilled with the target, and its own Enter makes the link
 	walk(&mut s, &[ "key L", "key )", "key Enter", "key Enter" ]);
 	assert!(settle(&mut s, || root.join("a.txt").symlink_metadata().is_ok()), "the link is there");
 	assert!(root.join("a.txt").symlink_metadata().expect("it").file_type().is_symlink(), "a link, not a copy");
@@ -1149,13 +995,11 @@ fn the_undo_takes_the_change_type_tasks_back() {
 	assert!(root.join("sub/a.txt").exists(), "and the file it pointed at is untouched");
 	assert!(s.app.undo_labels_for_tests().is_empty(), "the stack is empty again");
 
-	// nothing to take back is nothing said
 	let before = s.app.toast_text_for_tests();
 	walk(&mut s, &[ "key C-z" ]);
 	assert!(s.app.undo_labels_for_tests().is_empty(), "the stack stays empty");
 	assert_eq!(s.app.toast_text_for_tests(), before, "and nothing new is said");
 
-	// ② a rename: `r` opens the field, Ctrl+A its text, the new name is typed and Enter lands it
 	walk(&mut s, &[ "key r", "key C-a", "type b.txt", "key Enter" ]);
 	assert!(settle(&mut s, || root.join("sub/b.txt").exists() && !root.join("sub/a.txt").exists()), "the rename landed");
 	assert_eq!(s.app.undo_labels_for_tests(), vec![ "rename" ], "the rename joined the stack");
@@ -1165,8 +1009,6 @@ fn the_undo_takes_the_change_type_tasks_back() {
 	assert!(settle(&mut s, || root.join("sub/a.txt").exists() && !root.join("sub/b.txt").exists()), "Ctrl+Z renamed it back");
 	assert!(s.app.undo_labels_for_tests().is_empty(), "the stack is empty again");
 
-	// ③ a cut-paste: the selection is held, the cut taken, `h` walks up, and the paste moves it
-	// — the undo walks the moved set home (搬回)
 	walk(&mut s, &[ "key Space", "key C-x" ]);
 	assert_eq!(s.app.selection_for_tests(), vec![ root.join("sub/a.txt") ], "the row is selected for the cut");
 	walk(&mut s, &[ "key h" ]);
@@ -1179,7 +1021,6 @@ fn the_undo_takes_the_change_type_tasks_back() {
 	assert!(settle(&mut s, || root.join("sub/a.txt").exists() && !root.join("a.txt").exists()), "the undo walked it home");
 	assert!(s.app.undo_labels_for_tests().is_empty(), "and the stack is empty again");
 
-	// ④ the stack is ten deep: the eleventh change pushes the oldest out
 	s.app.note_for_tests(crate::toast::Undo::BookmarkSave("old".to_owned()));
 	for _ in 0..10 {
 		s.app.note_for_tests(crate::toast::Undo::Link(Vec::new()));
@@ -1191,13 +1032,8 @@ fn the_undo_takes_the_change_type_tasks_back() {
 	let _ = std::fs::remove_dir_all(&root);
 }
 
-/// P35①: a click on the parent column's directory row *enters* that directory — the middle
-/// column becomes its content, the user's own ruling (yazi's parent click navigates). The cwd's
-/// own row only seats (there is nowhere to go), a file row only seats, and the wheel keeps its
-/// own column (P33⑧'s test holds that half).
 #[test]
 fn a_click_on_the_parent_columns_directory_enters_it() {
-	// sandbox: root/{inside, sibling}/ and a loose file, standing in root/inside
 	let root = std::env::temp_dir().join(format!("crabhop-parent-go-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(root.join("inside")).expect("a sandbox");
@@ -1231,7 +1067,6 @@ fn a_click_on_the_parent_columns_directory_enters_it() {
 	}
 	let parent = parent.expect("the parent column drew the sandbox: inside, sibling, loose");
 
-	// the second row is `sibling`: the click enters it — `go`'s own door
 	s.move_at(egui::pos2(parent.center().x, parent.min.y + 40.0));
 	s.shoot();
 	s.click_at(egui::pos2(parent.center().x, parent.min.y + 40.0));
@@ -1247,7 +1082,6 @@ fn a_click_on_the_parent_columns_directory_enters_it() {
 	}
 	assert_eq!(listed, 1, "and the middle column shows the sibling's own content");
 
-	// the cwd's own row (now `sibling`, still the second row) only seats
 	s.move_at(egui::pos2(parent.center().x, parent.min.y + 40.0));
 	s.shoot();
 	s.click_at(egui::pos2(parent.center().x, parent.min.y + 40.0));
@@ -1256,7 +1090,6 @@ fn a_click_on_the_parent_columns_directory_enters_it() {
 	}
 	assert_eq!(s.app.cwd_for_tests(), root.join("sibling"), "the cwd's own row goes nowhere");
 
-	// and a file row only seats too: `loose.txt` is the third row
 	s.move_at(egui::pos2(parent.center().x, parent.min.y + 70.0));
 	s.shoot();
 	s.click_at(egui::pos2(parent.center().x, parent.min.y + 70.0));
@@ -1269,17 +1102,8 @@ fn a_click_on_the_parent_columns_directory_enters_it() {
 	let _ = std::fs::remove_dir_all(&root);
 }
 
-/// P35②: the user's own finding — Ctrl+C/X/Z/A answered nothing in the real window. The root
-/// cause is the window's own plumbing: egui-winit answers the clipboard chords with
-/// `Event::Copy` / `Event::Cut` / `Event::Paste` and never makes a key event of them, so a list
-/// that only reads keys is deaf to them (a replay synthesizes keys, which is why this stayed
-/// green headless). The keys' own spelling still works beside them. The panel matrix walks
-/// every panel the factory opens, closes it with Escape, and proves the real clipboard event
-/// still lands on the list — which is also the focus-cleanup dipstick.
 #[test]
 fn the_clipboard_chords_are_heard_in_the_windows_own_events() {
-	// a sandbox with room under the cursor: the matrix walks it a row per panel, and a listing
-	// of five would saturate `j` and make the walk a false failure
 	let root = std::env::temp_dir().join(format!("crabhop-chords-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(&root).expect("a sandbox");
@@ -1297,7 +1121,6 @@ fn the_clipboard_chords_are_heard_in_the_windows_own_events() {
 	}
 	assert!(s.app.listed() >= 12, "the sandbox listing has to land: {} rows", s.app.listed());
 
-	// the real window's spelling, on the list: Paste with nothing held reaches the paste door
 	s.inject(vec![ egui::Event::Paste("剪贴板的话".to_owned()) ]);
 	s.shoot();
 	assert_eq!(
@@ -1316,8 +1139,6 @@ fn the_clipboard_chords_are_heard_in_the_windows_own_events() {
 	assert_eq!(s.app.yank_paths_for_tests().len(), 1, "a real Ctrl+X holds the same row");
 	assert!(s.app.yank_cut_for_tests(), "as a cut");
 
-	// Ctrl+A is not one of the intercepted clipboard chords — it still arrives as a key event —
-	// and the list answers it with the whole view selected
 	s.inject(vec![ egui::Event::Key {
 		key: egui::Key::A,
 		physical_key: None,
@@ -1337,8 +1158,6 @@ fn the_clipboard_chords_are_heard_in_the_windows_own_events() {
 	s.shoot();
 	assert!(s.app.selection_for_tests().is_empty(), "and Escape lets it go again");
 
-	// the panel matrix: every panel the factory opens, closed with Escape, the list's own door
-	// proven by a cleared yank and the real Copy that follows
 	for (name, open) in [
 		("index", "key i"),
 		("help", "key ?"),
@@ -1374,9 +1193,6 @@ fn the_clipboard_chords_are_heard_in_the_windows_own_events() {
 			s.app.item_rename_for_tests(),
 		);
 
-		// the keyboard must be the list's again: `j` (the keymap's own arrow) walks the middle
-		// cursor — a panel that failed to close would eat it — and the real Copy that follows
-		// must hold the row the cursor now stands on
 		let before = s.app.yank_paths_for_tests();
 		let cursor = s.app.cursor_for_tests();
 		s.inject(vec![ egui::Event::Key {
@@ -1396,8 +1212,6 @@ fn the_clipboard_chords_are_heard_in_the_windows_own_events() {
 		assert_ne!(after, before, "{name}: and it holds the row the cursor now stands on");
 	}
 
-	// the field's own door, the real spelling: the filter takes the keyboard and its text is
-	// what Ctrl+C / Ctrl+X act on
 	s.app.rehearse(vec![ "key f".to_owned(), "type 甲乙".to_owned() ]);
 	for _ in 0..3000 {
 		if s.app.replay_done_for_tests() {
@@ -1419,12 +1233,8 @@ fn the_clipboard_chords_are_heard_in_the_windows_own_events() {
 	assert_eq!(s.copied_for_tests().as_deref(), Some("x"), "a real Ctrl+X emptied the field");
 }
 
-/// P35③: `T` opens the cursor's row in a terminal — a folder becomes the terminal's own cwd
-/// (P31's chain), and anything else says what it wants rather than guessing at a parent. The
-/// dry switch keeps the harness from opening a window: what would have run is recorded.
 #[test]
 fn t_opens_the_cursor_row_in_a_terminal() {
-	// sandbox: a folder and a file beside it
 	let root = std::env::temp_dir().join(format!("crabhop-terminal-here-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(root.join("folder")).expect("a sandbox");
@@ -1444,7 +1254,6 @@ fn t_opens_the_cursor_row_in_a_terminal() {
 		}
 	};
 
-	// the cursor stands on the folder: `T` records the chain's own answer, its cwd that folder
 	let mut s = session(vec![ format!("reveal {}", root.join("folder").display()) ]);
 	for _ in 0..600 {
 		if s.app.cwd_for_tests() == root {
@@ -1470,7 +1279,6 @@ fn t_opens_the_cursor_row_in_a_terminal() {
 	assert!(!launch.argv.is_empty(), "the chain named a command: {:?}", launch.argv);
 	assert_eq!(launch.folder, root.join("folder"), "and its cwd is the folder the cursor stood on");
 
-	// a file row only says what it wants — and nothing is launched
 	walk(&mut s, &[ "key j", "key T" ]);
 	assert_eq!(s.app.toast_text_for_tests().as_deref(), Some("须是文件夹"), "a file row is refused with words");
 	assert!(s.app.terminal_spawn_for_tests().is_none(), "and nothing was launched for it");
@@ -1479,9 +1287,6 @@ fn t_opens_the_cursor_row_in_a_terminal() {
 	let _ = std::fs::remove_dir_all(&root);
 }
 
-/// P35④: `y` / `x` reach the system clipboard as well — the targets' paths as text, so another
-/// program can paste them at once (the `text/uri-list` exchange the file managers read is the
-/// next phase). The `c` family has always gone through the same door; this is the yank's own.
 #[test]
 fn a_yank_also_reaches_the_system_clipboard() {
 	let root = std::env::temp_dir().join(format!("crabhop-yank-clip-{}", std::process::id()));
@@ -1522,11 +1327,9 @@ fn a_yank_also_reaches_the_system_clipboard() {
 	}
 	assert!(s.app.listed() >= 2, "the sandbox listing has to land");
 
-	// the `c` family's own door (audited, not changed): a filename as typed
 	walk(&mut s, &[ "key c", "key f" ]);
 	assert_eq!(s.copied_for_tests().as_deref(), Some("a.txt"), "`c f` copies the filename");
 
-	// a plain `y`: the cursor's row lands on the clipboard as its path
 	walk(&mut s, &[ "key y" ]);
 	assert_eq!(
 		s.copied_for_tests().as_deref(),
@@ -1534,7 +1337,6 @@ fn a_yank_also_reaches_the_system_clipboard() {
 		"`y` puts the cursor's path on the clipboard"
 	);
 
-	// a selection, cut: every target's path, one per line — the same order the yank holds
 	walk(&mut s, &[ "key Space", "key j", "key Space", "key x" ]);
 	let want = format!("{}\n{}", root.join("a.txt").display(), root.join("b.txt").display());
 	assert_eq!(s.copied_for_tests().as_deref(), Some(want.as_str()), "`x` puts the whole selection there");
@@ -1543,12 +1345,6 @@ fn a_yank_also_reaches_the_system_clipboard() {
 	let _ = std::fs::remove_dir_all(&root);
 }
 
-/// P35's final bug and its addendum, end to end: `text/plain`'s candidates carry nvim (its
-/// user-local `NoDisplay=true` mask used to erase it); the panel shows two zones — the
-/// recommended candidates first, every application behind — and one query filters them alike;
-/// and choosing a full-zone application runs once without writing a preference unless asked.
-/// The test walks the real menu: the row's menu, 打开方式…, the query, and the rows found by
-/// their own ids.
 #[test]
 fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	let root = std::env::temp_dir().join(format!("crabhop-openwith-{}", std::process::id()));
@@ -1581,11 +1377,8 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 	s.app.set_terminal_dry_for_tests();
 
-	// the row's menu, then 打开方式… — the fourth row of a file's own roster
 	walk(&mut s, &[ "menu 0", "key j", "key j", "key j", "key Enter" ]);
 
-	// the two zones (P35's addendum): the recommended candidates open the page, and every
-	// application follows — nvim, the writer, and a browser nobody recommends for text/plain
 	let rows = s.app.menu_app_rows_for_tests();
 	assert_eq!(rows.first().map(|(zone, _)| *zone), Some(Some("推荐")), "{rows:?}");
 	let full = rows.iter().position(|(zone, _)| *zone == Some("全部应用")).expect("the full zone follows: {rows:?} in {rows:?}");
@@ -1593,22 +1386,16 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	let all_ids: Vec<&str> = rows[full..].iter().map(|(_, id)| id.as_str()).collect();
 	assert!(all_ids.contains(&"nvim.desktop") && all_ids.contains(&"libreoffice-writer.desktop") && all_ids.contains(&"chromium.desktop"), "{all_ids:?}");
 
-	// one query over both zones: `chromium` is found from the full zone — whatever else a machine
-	// has whose *name* says chrom stands beside it, and nothing else does
 	walk(&mut s, &[ "type chrom" ]);
 	let filtered = s.app.menu_app_rows_for_tests();
 	assert!(filtered.iter().any(|(zone, id)| id == "chromium.desktop" && *zone == Some("全部应用")), "{filtered:?}");
 	assert!(filtered.iter().all(|(_, id)| id.to_lowercase().contains("chrom")), "only the matches stand: {filtered:?}");
 	assert!(!filtered.iter().any(|(_, id)| id == "nvim.desktop"), "and a text/plain-only app is filtered out");
 
-	// Escape clears the query before it backs out; the page is whole again
 	walk(&mut s, &[ "key Escape" ]);
 	assert_eq!(s.app.menu_app_rows_for_tests().len(), rows.len(), "the query is let go first");
 	assert!(s.app.menu_app_rows_for_tests().iter().any(|(_, id)| id == "nvim.desktop"), "and the page still stands");
 
-	// stand on the full zone's own nvim — the query brings it down to two rows, and the second is
-	// the full zone's — take it: P37③'s own re-cut runs it at once (仅一次), and the mimeapps
-	// file is not touched
 	walk(&mut s, &[ "type nvim" ]);
 	let rows = s.app.menu_app_rows_for_tests();
 	assert_eq!(rows.len(), 2, "both zones answer for nvim: {rows:?}");
@@ -1637,7 +1424,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	assert!(launch.argv.iter().any(|part| part == "nvim"), "the program follows it: {:?}", launch.argv);
 	assert_eq!(launch.argv.last().map(String::as_str), Some(root.join("note.txt").display().to_string().as_str()), "and the file is the command's argument");
 	assert_eq!(launch.folder, root, "with the file's own directory as the cwd");
-	// 仅一次 and the write path retired together (P37③): the pick writes no preference at all
 	assert_eq!(
 		crate::config::Config::mimeapps().and_then(|at| std::fs::read_to_string(at).ok()),
 		before,
@@ -1647,12 +1433,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	let _ = std::fs::remove_dir_all(&root);
 }
 
-	/// P36①: Enter on a menu row goes the way a click goes — that was the user's own complaint
-	/// (「Standing 在打开方式行按 Enter 无反应，必须鼠标点」). The bug was the pointer's quiet
-	/// re-seat: every frame, whatever row the pointer lay over took the standing row over, so a
-	/// walk to 打开方式 was rewritten under the person's eyes and Enter took the pointer's row —
-	/// which, on a greyed or out-of-range row, acted on nothing at all. The test keeps the real
-	/// pointer lying over the menu's first row for the whole walk.
 	#[test]
 	fn the_open_with_row_opens_on_enter_with_the_pointer_lying_over_another_row() {
 		let root = std::env::temp_dir().join(format!("crabhop-p36a-{}", std::process::id()));
@@ -1670,7 +1450,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 
-		// a real pointer where the row's menu will open, then the menu's own replay step
 		let (body, shares) = s.app.layout();
 		let list = chrome::columns(body, shares).current;
 		let at = egui::pos2(list.min.x + 80.0, list.min.y + 40.0);
@@ -1686,12 +1465,10 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert!(s.app.menu_state_for_tests().is_some_and(|(page, _)| page == "main"), "the row's menu is up: {:?}", s.app.menu_state_for_tests());
 
-		// the pointer settles over the menu's first row and stays there for the whole walk
 		s.move_at(egui::pos2(at.x + 40.0, at.y + 26.0 + 12.0));
 		s.shoot();
 		s.shoot();
 
-		// walk to 打开方式 (a file's fourth row) and press Enter
 		s.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -1705,9 +1482,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P36②: while the panel stands, the wheel is the panel's — its pages walk their own window
-	/// with it (P36③), and the file list behind does not move a row. The control runs first: with
-	/// nobody over it, the very same wheel does move the list.
 	#[test]
 	fn the_wheel_walks_the_panel_and_never_the_list_behind() {
 		let root = std::env::temp_dir().join(format!("crabhop-p36b-{}", std::process::id()));
@@ -1722,7 +1496,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 		assert_eq!(s.app.scroll_offset_for_tests(), 0);
 
-		// the control: with no panel up, the wheel walks the list
 		s.app.rehearse(vec![ "wheel -6".to_owned() ]);
 		for _ in 0..120 {
 			if s.app.replay_done_for_tests() && s.app.scroll_offset_for_tests() > 0 {
@@ -1733,7 +1506,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert!(s.app.scroll_offset_for_tests() > 0, "the list hears the wheel when no panel stands: {}", s.app.scroll_offset_for_tests());
 
-		// the applications page, up the way the E2E opens it
 		s.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(8));
@@ -1744,8 +1516,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert!(s.app.menu_state_for_tests().is_some_and(|(page, _)| page == "apps"), "the applications page stands");
 
-		// the wheel now belongs to the panel: its window walks (the cap is twelve rows against a
-		// machine's whole roster), and the list behind is where it was
 		let list_before = s.app.scroll_offset_for_tests();
 		let menu_before = s.app.menu_scroll_for_tests();
 		s.app.rehearse(vec![ "wheel -14".to_owned() ]);
@@ -1765,7 +1535,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 			s.app.menu_scroll_for_tests()
 		);
 
-		// and the rule holds on the item page too: Esc back to the menu, a wheel, the list still
 		s.app.rehearse(vec![ "key Esc".to_owned(), "wheel -6".to_owned() ]);
 		for _ in 0..120 {
 			if s.app.replay_done_for_tests() {
@@ -1783,17 +1552,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P36④: `o` opens the cursor row's context menu — the user's own key, for hands without a
-	/// second button. It is the right click's own door: the same panel, the same target, the same
-	/// state. The factory table carries the row (the help list and `which` read it from there).
-	/// P37⑤: the right column's document previews (docx, sheet, text) walk again — the seek keys
-	/// and the wheel both. The bisect the user handed down pointed at P36②'s wheel routing and at
-	/// the document path; the evidence here says neither: with no panel standing the wheel walked
-	/// the preview all along (the guard only fires while the menu is), and what was missing were
-	/// the seek keys — `J`/`K` lost their rows from the factory table in P21's wave one and never
-	/// got them back, so the keyboard could not move a document at all. Restored beside the wheel,
-	/// with this reel as the guard: a docx (a real zip, the extractor's own shape) scrolls by the
-	/// key, then by the wheel, and the second screen's pixel band changes with the offset.
 	#[test]
 	fn the_seek_keys_and_the_wheel_walk_a_document_preview() {
 		use std::io::Write as _;
@@ -1801,7 +1559,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 
-		// a docx of the test's own: a zip with word/document.xml, the extractor's own shape
 		{
 			let file = std::fs::File::create(root.join("long.docx")).expect("a docx file");
 			let mut zip = zip::ZipWriter::new(file);
@@ -1844,7 +1601,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		);
 		let ink_before = lit(&s.shoot(), band);
 
-		// `J`: the seek key walks five lines of text
 		s.app.rehearse(vec![ "key J".to_owned() ]);
 		for _ in 0..60 {
 			if s.app.replay_done_for_tests() {
@@ -1857,7 +1613,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let by_key = s.app.preview_extent_for_tests().expect("still scrollable").1;
 		assert!(by_key >= 100.0, "`J` walked five lines of text: {by_key}");
 
-		// the wheel over the preview column walks it further, and the second screen moves with it
 		s.app.rehearse(vec![ format!("hover {} {}", preview.center().x, preview.center().y), "wheel -5".to_owned() ]);
 		for _ in 0..60 {
 			if s.app.replay_done_for_tests() {
@@ -1892,7 +1647,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 
-		// the cursor's own row by the key: a file's roster, four rows
 		s.app.rehearse(vec![ "key o".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -1904,7 +1658,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let by_key = s.app.menu_state_for_tests();
 		assert_eq!(by_key, Some(("main", 4)), "`o` opened the cursor row's menu");
 
-		// Esc, then the right click on the very same row: one menu, two doors
 		s.app.rehearse(vec![ "key Esc".to_owned() ]);
 		for _ in 0..60 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -1927,10 +1680,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-/// P37①, the user's own re-cut of the list's `Enter`: the default opener takes the row — files
-	/// and directories alike (a directory goes to its default application, the file manager, not
-	/// into the window) — and the way in is `l` and `<Right>`, which still change the cwd. The
-	/// harness's dry switch records what the opener would have been handed, so nothing spawns.
 	#[test]
 	fn enter_opens_the_default_and_l_enters_the_directory() {
 		let root = std::env::temp_dir().join(format!("crabhop-p37a-{}", std::process::id()));
@@ -1950,7 +1699,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox, seated on the directory");
 		s.app.set_open_dry_for_tests();
 
-		// Enter on the directory row: the default opener's own path — and the window stays put
 		s.app.rehearse(vec![ "key Enter".to_owned() ]);
 		let mut opened = None;
 		for _ in 0..120 {
@@ -1964,7 +1712,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		assert_eq!(opened, Some(root.join("sub")), "Enter handed the directory to the default opener");
 		assert_eq!(s.app.cwd_for_tests(), root, "and did not step into it");
 
-		// `l`: the way in
 		s.app.rehearse(vec![ "key l".to_owned() ]);
 		for _ in 0..120 {
 			if s.app.cwd_for_tests() == root.join("sub") {
@@ -1975,7 +1722,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert_eq!(s.app.cwd_for_tests(), root.join("sub"), "`l` entered the directory");
 
-		// back out, seat on the directory again, then `<Right>`: the smart enter walks in too
 		s.app.rehearse(vec![ "key h".to_owned() ]);
 		for _ in 0..120 {
 			if s.app.cwd_for_tests() == root {
@@ -2003,9 +1749,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P37②: the 打开方式 row answers to `l` too — the menu's own step-into gesture takes the
-	/// applications list, exactly the door Enter opens. The test walks both ways to the same row
-	/// and compares the states.
 	#[test]
 	fn the_open_with_row_opens_on_l_as_well() {
 		let root = std::env::temp_dir().join(format!("crabhop-p37l-{}", std::process::id()));
@@ -2034,12 +1777,10 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 			s.app.menu_state_for_tests()
 		};
 
-		// `l` on the 打开方式 row (a file's fourth)
 		s.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key l".to_owned() ]);
 		let by_l = wait_page(&mut s, "apps");
 		assert!(by_l.is_some_and(|(page, _)| page == "apps"), "`l` opened the applications page: {by_l:?}");
 
-		// Esc back to the items, then Enter on the same row: one page, two doors
 		s.app.rehearse(vec![ "key Esc".to_owned() ]);
 		let back = wait_page(&mut s, "main");
 		assert_eq!(back, Some(("main", 4)), "Esc stepped back to the items");
@@ -2050,10 +1791,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P37③ + P38①, the user's own re-cut and their frame: the applications panel is a compact
-	/// window with floors on both axes — a query that filters to nothing leaves the rect at the
-	/// height floor and the width floor, with the empty state standing in the kept room — and
-	/// whatever the panel says is clipped to it: nothing is drawn outside the rect.
 	#[test]
 	fn the_applications_panel_keeps_its_floors_and_draws_inside_them() {
 		let root = std::env::temp_dir().join(format!("crabhop-p37f-{}", std::process::id()));
@@ -2071,7 +1808,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 
-		// the applications page, the way the E2E opens it
 		s.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(8));
@@ -2080,13 +1816,11 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 				break;
 			}
 		}
-		// the panel's rect is written by the draw, one step behind the state: one settling frame
 		s.shoot();
 		assert!(s.app.menu_state_for_tests().is_some_and(|(page, _)| page == "apps"), "the applications page stands");
 		let full = s.app.menu_panel_rect_for_tests().expect("the panel was drawn").3;
 		assert!(full >= crate::menu::menu_apps_floor(), "a full window is at least the floor: {full}");
 
-		// a needle nothing answers: the rows go, the height stays
 		s.app.rehearse(vec![ "type zzzzzzz".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(8));
@@ -2102,8 +1836,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		assert_eq!(ph, crate::menu::menu_apps_floor(), "the height floor holds while the empty state shows");
 		assert_eq!(pw, crate::menu::MENU_APPS_MIN_W, "and so does the width floor: {pw}");
 
-		// nothing is painted outside the panel: a strip just beyond its right edge is the list's
-		// own pixels with the panel up — exactly what it is with the panel down
 		let pixels_of = |image: &egui::ColorImage, rect: egui::Rect| -> Vec<egui::Color32> {
 			let mut out = Vec::new();
 			for y in (rect.min.y as usize)..(rect.max.y as usize) {
@@ -2113,15 +1845,12 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 			}
 			out
 		};
-		// clear of the edge by more than the shadow reaches (18px and a nudge): the shadow is the
-		// panel's own décor, not a word (P38①)
 		let strip = egui::Rect::from_min_max(
 			egui::pos2(px + pw + 26.0, py + 6.0),
 			egui::pos2(px + pw + 60.0, py + ph - 6.0),
 		);
 		let open_pixels = pixels_of(&s.shoot(), strip);
 
-		// Esc clears the query, Esc steps back, Esc closes: the same strip, the panel gone
 		s.app.rehearse(vec![ "key Esc".to_owned(), "key Esc".to_owned(), "key Esc".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(8));
@@ -2138,11 +1867,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P37④, the user's own report («总是 nvim 后 Enter 打不开»): the default-open path wraps a
-	/// `Terminal=true` default handler in the machine's terminal chain, the way the menu's own
-	/// launch does — and everything else stays with `xdg-open`. The preference is handed in
-	/// through the test seam (the person's own `mimeapps.list` is never touched), the entry is the
-	/// machine's real nvim, and the dry switch hears the chain so no window opens.
 	#[test]
 	fn the_default_open_wraps_a_terminal_handler_in_the_chain() {
 		let root = std::env::temp_dir().join(format!("crabhop-p37t-{}", std::process::id()));
@@ -2160,8 +1884,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 
-		// the preferences the lookup reads, handed in (the person's own file is never touched):
-		// nvim — a `Terminal=true` entry — is this unregistered type's default
 		let mime = crate::mime::guess("note.dfmx", false);
 		s.app.set_mimeapps_for_tests(format!("[Default Applications]\n{mime}=nvim.desktop;\n"));
 		s.app.set_terminal_dry_for_tests();
@@ -2187,10 +1909,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P38②, the user's own ruling («总是 复活»): Enter on an applications row runs it once —
-/// `Ctrl+Enter` writes the type's default first (the merge, through the test seam — no file
-/// anywhere) and then runs it, and the footer says so. The assertions: Enter leaves the
-/// preferences byte-identical, Ctrl+Enter gains the entry's own id.
 	#[test]
 	fn ctrl_enter_writes_the_default_and_enter_leaves_it_alone() {
 		let root = std::env::temp_dir().join(format!("crabhop-p38b-{}", std::process::id()));
@@ -2209,11 +1927,9 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 		s.app.set_terminal_dry_for_tests();
 
-		// the preferences the merge reads and writes: the seam, holding one other type already
 		let seed = "[Added Associations]\nimage/png=writer.desktop;\n".to_owned();
 		s.app.set_mimeapps_for_tests(seed.clone());
 
-		// the walk into the applications, onto nvim (a terminal entry, so the launch is dry)
 		let onto_nvim = |s: &mut Session| {
 			s.app.rehearse(vec![
 				"menu 0".to_owned(),
@@ -2236,7 +1952,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 			}
 		};
 
-		// Enter: the app runs at once, and the preferences are not touched
 		onto_nvim(&mut s);
 		s.app.rehearse(vec![ "key Enter".to_owned() ]);
 		let mut once = None;
@@ -2253,7 +1968,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		assert!(once.is_some(), "the app ran");
 		assert_eq!(s.app.mimeapps_text_for_tests(), Some(seed.clone()), "Enter writes nothing");
 
-		// Ctrl+Enter: the default is written down (the merge gains nvim) and the app runs
 		onto_nvim(&mut s);
 		s.app.rehearse(vec![ "key C-Enter".to_owned() ]);
 		let mut always = None;
@@ -2275,11 +1989,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P38③: the scroll contract — six preview kinds × three ways; every pane that can scroll must
-/// actually scroll. The wheel, the seek keys, and the overlay scrollbar dragged by a real
-/// pointer. The picture's keys cell is its documented exception: `seek` answers nothing for an
-/// image (the picture walks by wheel and by hand), and that is asserted too. One test, eighteen
-/// cells — the gate the routing and extent changes must pass from now on.
 	#[test]
 	fn the_scroll_contract_matrix_holds_for_every_kind_and_way() {
 		use std::io::Write as _;
@@ -2299,7 +2008,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 			zip.finish().unwrap();
 		};
 
-		// docx: the extractor's own shape
 		let mut docx = String::from("<w:document xmlns:w=\"x\"><w:body>");
 		for i in 0..400 {
 			docx.push_str(&format!("<w:p><w:r><w:t>line {i:03}</w:t></w:r></w:p>"));
@@ -2307,7 +2015,6 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		docx.push_str("</w:body></w:document>");
 		put_zip("long.docx", vec![ ("word/document.xml", docx) ]);
 
-		// xlsx: calamine's shape — content types, workbook, its rels, one inline-string sheet
 		let mut sheet = String::from(
 			"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>",
@@ -2355,13 +2062,11 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			("xl/worksheets/sheet1.xml", sheet),
 		]);
 
-		// markdown and code: plain lines, long enough to outrun the column
 		let lines: String = (0..400).map(|i| format!("# line {i:03} of the long markdown file\n")).collect();
 		std::fs::write(root.join("long.md"), lines.as_bytes()).expect("a markdown file");
 		let code: String = (0..400).map(|i| format!("let value_{i:03} = {i};\n")).collect();
 		std::fs::write(root.join("long.rs"), code.as_bytes()).expect("a code file");
 
-		// archive: enough entries that the tree outruns the column
 		let file = std::fs::File::create(root.join("many.zip")).expect("an archive");
 		{
 			let mut zip = zip::ZipWriter::new(file);
@@ -2374,7 +2079,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			zip.finish().unwrap();
 		}
 
-		// picture: taller than the column at 1:1 (the fit keeps it whole, so the zoom comes first)
 		image::RgbaImage::from_pixel(120, 900, image::Rgba([ 200, 40, 40, 255 ]))
 			.save(root.join("tall.png"))
 			.expect("a picture");
@@ -2400,7 +2104,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			assert_eq!(s.app.cwd_for_tests(), root, "{kind}: the window stands on the sandbox");
 
 			if picture {
-				// the picture lands first, then the zoom that makes it a page to walk
 				for _ in 0..300 {
 					if s.app.preview_offset_for_tests().is_some() {
 						break;
@@ -2420,8 +2123,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 				s.shoot();
 			}
 
-			// the sheet's head is not a page (P42): its contract is the opposite of the other
-			// five — nothing to scroll, and none of the three ways has anything to move
 			if kind == "xlsx" {
 				for _ in 0..240 {
 					std::thread::sleep(Duration::from_millis(8));
@@ -2431,7 +2132,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 				continue;
 			}
 
-			// the pane has to be up and scrollable before any way means anything
 			for _ in 0..300 {
 				if s.app.preview_extent_for_tests().is_some() {
 					break;
@@ -2444,7 +2144,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			let (body, shares) = s.app.layout();
 			let preview = chrome::columns(body, shares).preview.expect("a preview column");
 
-			// way one: the wheel over the column
 			s.app.rehearse(vec![ format!("hover {} {}", preview.center().x, preview.center().y), "wheel -5".to_owned() ]);
 			for _ in 0..60 {
 				if s.app.replay_done_for_tests() {
@@ -2458,7 +2157,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			let by_wheel = s.app.preview_extent_for_tests().expect("still scrollable").1;
 			assert!(by_wheel > start + 1.0, "{kind} × wheel moves the offset: {by_wheel} from {start}");
 
-			// way two: the seek keys (`J`; the picture's own contract is the documented no-op)
 			let before_keys = by_wheel;
 			s.app.rehearse(vec![ "key J".to_owned() ]);
 			for _ in 0..60 {
@@ -2476,7 +2174,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 				assert!(by_keys > before_keys + 1.0, "{kind} × keys moves the offset: {by_keys} from {before_keys}");
 			}
 
-			// way three: the overlay scrollbar, dragged by a real pointer
 			let before_bar = s.app.preview_extent_for_tests().expect("still scrollable").1;
 			let (content, offset, view) = s.app.preview_extent_for_tests().expect("still scrollable");
 			let track = egui::Rect::from_min_max(
@@ -2505,10 +2202,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P38④, the user's ruling (mimeapps.list = the desk's shared ledger, read live, written whole):
-/// the default-open resolution takes the person's own file first and the system's behind it, and
-/// a change to the ledger — mtime and all, the way another manager writes it — is seen on the
-/// very next open, no restart. `Ctrl+Enter`'s merge lands on the same file, whole and civil.
 	#[test]
 	fn the_mimeapps_ledger_is_read_live_and_the_system_stands_behind_it() {
 		let root = std::env::temp_dir().join(format!("crabhop-p38l-{}", std::process::id()));
@@ -2526,10 +2219,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 
-		// the ledgers are the test's own files (P38④'s path seams): the person's level and the
-		// system's — never a shared path another test reads, and outside the sandbox's own
-		// listing, so the row the walk opens is always the note itself (a directory here would
-		// sort first and the walk would open its folder menu instead)
 		let ledgers = std::env::temp_dir().join(format!("crabhop-p38l-ledgers-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&ledgers);
 		std::fs::create_dir_all(&ledgers).expect("the ledgers' own directory");
@@ -2540,7 +2229,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		s.app.set_terminal_dry_for_tests();
 		s.app.set_open_dry_for_tests();
 
-		// a ledger write moves the mtime, the way another manager's own write does
 		let write = |at: &std::path::Path, text: &str, ahead: u64| {
 			std::fs::write(at, text).expect("the ledger write");
 			let file = std::fs::File::options().write(true).open(at).expect("the ledger");
@@ -2584,31 +2272,23 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			None
 		};
 
-		// the person's ledger names nvim: the terminal chain answers
 		write(&user, "[Default Applications]\ntext/plain=nvim.desktop;\n", 1);
 		enter(&mut s);
 		assert!(terminal(&mut s).is_some(), "the person's own ledger pointed at nvim");
 
-		// another manager rewrites the ledger under the window's feet: chromium answers now —
-		// the live read sees it on the very next open (a cache that missed the mtime would
-		// still be serving nvim here)
 		write(&user, "[Default Applications]\ntext/plain=chromium.desktop;\n", 2);
 		enter(&mut s);
 		assert!(opened(&mut s).is_some(), "the rewrite was seen without a restart");
 
-		// the person's ledger drops the type: the system's own stands behind it
 		write(&user, "[Added Associations]\nimage/png=writer.desktop;\n", 3);
 		write(&system, "[Default Applications]\ntext/plain=nvim.desktop;\n", 1);
 		enter(&mut s);
 		assert!(terminal(&mut s).is_some(), "the system's ledger answered behind the person's");
 
-		// and when both speak, the person's own line wins
 		write(&user, "[Default Applications]\ntext/plain=chromium.desktop;\n", 4);
 		enter(&mut s);
 		assert!(opened(&mut s).is_some(), "the person's line beat the system's");
 
-		// `Ctrl+Enter`'s merge writes the same ledger whole: the type gains its line and every
-		// unrelated line stays (a real file, written atomically)
 		write(&user, "[Added Associations]\nimage/png=writer.desktop;\ntext/x-other=other.desktop;\n", 5);
 		s.app.rehearse(vec![
 			"menu 0".to_owned(),
@@ -2639,17 +2319,12 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&ledgers);
 	}
 
-	/// P40: `Del` in the index panel reaches the 高频 and 最近 zones too — the standing frecency
-	/// entry goes whole (path, score and clock), the store's own file loses the path, the toast
-	/// carries the undo, and the undo brings the score back exactly as it was. The bookmarks'
-	/// own delete is the same door it always was. The store is the test's own state dir.
 	#[test]
 	fn the_index_panel_deletes_a_frecency_row_and_the_undo_brings_the_score_back() {
 		let tmp = std::env::temp_dir().join(format!("crabhop-frecency-del-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&tmp);
 		std::fs::create_dir_all(&tmp).expect("a state dir of the test's own");
 
-		// two entries of the test's own: `hot` clearly the high-frequency head, `cold` behind it
 		let hot = std::env::temp_dir().join(format!("crabhop-frecency-hot-{}", std::process::id()));
 		let cold = std::env::temp_dir().join(format!("crabhop-frecency-cold-{}", std::process::id()));
 		std::fs::create_dir_all(&hot).expect("hot");
@@ -2667,8 +2342,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		.expect("the store");
 
 		let mut s = session(Vec::new());
-		// the store is the test's own file (P40's seam): every session writes its visits to its own
-		// store, so a shared file is a race the assertions must not run
 		let store = tmp.join("frecency.json");
 		s.app.set_frecency_path_for_tests(store.clone());
 
@@ -2683,13 +2356,11 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		};
 		let listed = |s: &Session| s.app.fuzzy_rows_for_tests().iter().any(|(_, text)| text.contains("frecency-hot"));
 
-		// the panel opens on its list; the 高频 zone's head is the standing row
 		s.app.rehearse(vec![ "key i".to_owned() ]);
 		wait(&mut s, Box::new(listed));
 		let rows = s.app.fuzzy_rows_for_tests();
 		assert_eq!(rows.first().map(|(zone, _)| *zone), Some("高频"), "the head is the high zone's own: {rows:?}");
 
-		// `Del`: the row goes, the file forgets the path, the toast carries the undo
 		s.app.rehearse(vec![ "key Delete".to_owned() ]);
 		wait(&mut s, Box::new(move |s| !listed(s)));
 		assert!(!listed(&s), "the row is gone from the panel");
@@ -2698,7 +2369,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert!(filed.contains("frecency-cold"), "and kept its neighbour: {filed}");
 		assert!(s.app.toast_undo_for_tests(), "the toast offers the undo");
 
-		// the panel lets the keyboard go, then `u`: the entry comes back with its own score
 		s.app.rehearse(vec![ "key Esc".to_owned(), "key u".to_owned() ]);
 		for _ in 0..120 {
 			if s.app.replay_done_for_tests() {
@@ -2719,9 +2389,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&cold);
 	}
 
-	/// P42: the sheet pane draws a head — the name, the labels' band with its hairlines and its
-	/// bold labels, and one line of structure under it — and the body stays blank: no text pixel
-	/// stands below the head, and nothing scrolls. The fixture is built here, its columns known.
 	#[test]
 	fn the_sheet_preview_draws_its_head_and_leaves_the_body_blank() {
 		use std::io::Write as _;
@@ -2730,7 +2397,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 
-		// one sheet: A wide, B default, C narrow; forty rows so a body would have shown
 		let mut zip = zip::ZipWriter::new(std::fs::File::create(root.join("grid.xlsx")).expect("the fixture"));
 		let options: zip::write::FileOptions<'_, ()> =
 			zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -2773,22 +2439,17 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let run = |x0: usize, x1: usize, y: usize| (x0..x1).filter(|x| at(*x, y) == tokens.text).count();
 		let (left, right) = (preview.min.x as usize, preview.max.x as usize);
 
-		// the name's line: ink of any weight (the glyphs are anti-aliased, so "not the pane's
-		// own background" is the honest reading)
 		let name_y = (preview.min.y + 12.0) as usize;
 		assert!((left..right).any(|x| at(x, name_y) != tokens.base), "the sheet's name is on the first line");
 
-		// the labels' band: its flat shading, ink over it, and the hairlines between the blocks
 		let band_y = (preview.min.y + 40.0) as usize;
 		assert!((left..right).any(|x| at(x, band_y) == tokens.raised), "the band carries its shading");
 		assert!((left..right).filter(|x| at(*x, band_y) != tokens.raised).count() > 20, "and the labels are drawn");
 		assert!((left..right).any(|x| at(x, band_y) == tokens.border), "with a hairline between the blocks");
 
-		// the structure's own line under the band
 		let sum_y = (preview.min.y + 70.0) as usize;
 		assert!((left..right).any(|x| at(x, sum_y) != tokens.base), "the structure line stands under it");
 
-		// the body: from below the head to the column's foot, no text at all — and nothing scrolls
 		let top = (preview.min.y + 92.0) as usize;
 		let mut body_text = 0;
 		for y in top..preview.max.y as usize {
@@ -2800,16 +2461,11 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
-	/// P42②: a toast is as wide as what it says — the rect measured from the text (the bar's and
-	/// the undo seat's room included) instead of a fixed sheet that cut words off; the window's
-	/// own width is the only clamp.
 	#[test]
 	fn a_toast_is_as_wide_as_its_words() {
 		let mut s = session(Vec::new());
 		assert!(s.wait_for_list(2, 200), "the listing lands first");
 
-		// a long file name, said the way a refusing launcher's failure is: longer than the old
-		// fixed sheet, and short enough to stand whole inside the window
 		let long = "/tmp/".to_owned() + &"长".repeat(40) + ".txt";
 		s.app.open_failed_for_tests(std::path::PathBuf::from(long));
 		for _ in 0..60 {
@@ -2822,7 +2478,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert!(width >= text_w, "the rect fits its words: {width} against {text_w}");
 		assert!(width > 300.0, "and outgrows the fixed sheet it used to be: {width}");
 
-		// a short note stays a short note
 		s.app.open_failed_for_tests(std::path::PathBuf::from("/tmp/x.txt"));
 		for _ in 0..30 {
 			std::thread::sleep(Duration::from_millis(8));
@@ -2834,13 +2489,8 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert!(short_w >= short_text, "and it too fits its words");
 	}
 
-	/// A picture's own scroll stops at the column's top (P27①'s spill, caught by eye on the
-	/// evidence frames): with a zoomed picture scrolled up, the tab bar's band holds none of it —
-	/// the column's own clip keeps the chrome clean. A picture at the fit is whole inside its
-	/// zone and has nothing to scroll (P28①), so the zoom is what makes the wheel mean anything.
 	#[test]
 	fn a_scrolled_picture_never_reaches_the_tab_bar() {
-		// a tall, unmistakably red picture of the test's own
 		let at = std::env::temp_dir().join(format!("crabhop-tall-{}.png", std::process::id()));
 		image::RgbaImage::from_pixel(120, 900, image::Rgba([ 250, 20, 20, 255 ]))
 			.save(&at)
@@ -2851,8 +2501,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			"hover 900 400".to_owned(),
 		]);
 
-		// the picture has to land before any gesture means anything: a zoom fed to an empty column
-		// is no zoom at all, and the replay's own cadence is not something a test may lean on
 		let mut on_screen = false;
 		for _ in 0..240 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -2864,8 +2512,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		assert!(on_screen, "the picture has to be on screen");
 
-		// the fit is whole inside its zone (P28①), so the zoom is what makes the picture taller
-		// than the column — and the wheel is what walks it
 		session.app.rehearse(vec![
 			"hover 900 400".to_owned(),
 			"zoom in".to_owned(),
@@ -2875,7 +2521,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			"wheel -10".to_owned(),
 		]);
 
-		// and the wheel has to move it: its own offset is the app's word
 		let mut offset = 0.0;
 		for _ in 0..240 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -2908,20 +2553,15 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let columns = chrome::columns(body, shares);
 		let preview = columns.preview.expect("all three columns at this size");
 
-		// the picture is on screen — its own column, under the tab bar, is where it shows
 		assert!(
 			count(preview.min.x, body.min.y + 8.0, preview.max.x, body.min.y + 300.0) > 0,
 			"the scrolled picture is up"
 		);
-		// and the tab bar's band above the body holds none of it
 		assert_eq!(count(0.0, 0.0, image.size[0] as f32, chrome::TAB_HEIGHT), 0, "the chrome stays clean");
 
 		let _ = std::fs::remove_file(&at);
 	}
 
-	/// `/` opens its box and the list colours the letters the search holds (P21): the strip's own
-	/// prefix is accent, and the middle column's list carries more accent with a search live than
-	/// without one — where the *letters* are, and only there.
 	#[test]
 	fn the_slash_paints_its_strip_and_colours_its_matches() {
 		let accent = Tokens::MOCHA.accent;
@@ -2936,8 +2576,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			}
 			n
 		};
-		// the strip sits between the body and the status bar; the list's own band is the middle
-		// column's upper half (where the rows with a match are)
 		let bands = |session: &Session| {
 			let (body, shares) = session.app.layout();
 			let columns = chrome::columns(body, shares);
@@ -2966,7 +2604,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		assert!(found.app.find_open_for_tests(), "the box opened");
 
-		// the query goes in next, and the frame that draws its colours is read
 		found.app.rehearse(vec![ "type toml".to_owned() ]);
 		for _ in 0..40 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -2990,13 +2627,10 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		);
 	}
 
-	/// The harness paints a frame with the three columns and the status bar in it: the picture is
-	/// not empty, and each of the window's own bands has content of its own (P25).
 	#[test]
 	fn a_headless_frame_holds_the_columns_and_the_status_bar() {
 		let mut session = session(Vec::new());
 
-		// let the list land: the first frames read the directory off a worker
 		let mut image = session.shoot();
 		for _ in 0..30 {
 			std::thread::sleep(Duration::from_millis(20));
@@ -3006,7 +2640,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert_eq!(image.size, [ 1200, 800 ], "the picture is the frame's own size");
 		assert!(lit(&image, egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1200.0, 800.0))) > 1000, "the frame is not blank");
 
-		// the bands the app itself laid out: the three columns and the status bar
 		let (body, shares) = session.app.layout();
 		let columns = chrome::columns(body, shares);
 		let middle = egui::Rect::from_min_max(egui::pos2(columns.current.min.x, body.min.y), egui::pos2(columns.current.max.x, body.max.y));
@@ -3023,13 +2656,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert!(lit(&image, status) > 20, "the status bar is drawn: {}", lit(&image, status));
 	}
 
-	/// `j` moves the cursor (P25): one session stands on the first row, and a session that is
-	/// handed `key j` — *after* its listing has landed — stands on the second. The app's cursor says
-	/// so, and the accent mark down the middle column's left edge stands a row lower in the picture.
-	///
-	/// The listing is waited for before any key is fed: the replay's timer and the directory's
-	/// worker race, and a `key j` that lands first moves nothing (the orchestrator caught exactly
-	/// that on their machine — the green run at hand-off was this machine's luck).
 	#[test]
 	fn the_cursor_row_moves_with_a_replay_step() {
 		let mut first = session(Vec::new());
@@ -3037,13 +2663,10 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let first_image = first.shoot();
 		assert_eq!(first.cursor(), 0, "where a session with no replay stands");
 
-		// the second session waits for the same listing, and only then is `j` put in its hands
 		let mut second = session(Vec::new());
 		assert!(second.wait_for_list(2, 200), "the second session's listing");
 		second.app.rehearse(vec![ "key j".to_owned() ]);
 
-		// the replay runs at the *end* of a frame: paint until the cursor has moved, then paint the
-		// frame that draws it (this one is where the picture and the state agree)
 		for _ in 0..50 {
 			if second.cursor() == 1 {
 				break;
@@ -3066,7 +2689,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		);
 	}
 
-	/// One pixel inside the middle column's own left edge (the cursor's band is read there).
 	fn band_x(session: &Session) -> usize {
 		let (body, shares) = session.app.layout();
 		let columns = chrome::columns(body, shares);
@@ -3074,9 +2696,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		(columns.current.min.x + 6.0) as usize
 	}
 
-	/// The column holds the picture and nothing else (P28②'s revision): the info block that used
-	/// to stand under it is gone — it moved to the spot card — so the band below a short picture
-	/// is bare, where six lines of words used to be.
 	#[test]
 	fn no_words_stand_under_the_picture_in_the_column() {
 		let at = std::env::temp_dir().join(format!("crabhop-p28-notext-{}.png", std::process::id()));
@@ -3086,7 +2705,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 
 		let mut session = session(vec![ format!("reveal {}", at.display()) ]);
 
-		// the picture has to be up first, and its own foot is where the red pixels stop
 		let mut up = None;
 		for _ in 0..240 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -3108,7 +2726,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		let (preview, foot, stride) = up.expect("the picture has to be on screen");
 
-		// the badge lives 1.5s after a picture lands: let it die before the band is read
 		std::thread::sleep(Duration::from_millis(1700));
 		let image = session.shoot();
 
@@ -3126,9 +2743,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_file(&at);
 	}
 
-	/// The row's own menu (P31), walked headless through its pages: a file's one item, a folder's
-	/// two, the applications that handle a directory's type, the two answers of the confirm — and
-	/// Esc backing out one page at a time.
 	#[test]
 	fn the_rows_menu_walks_its_pages() {
 		let dir = std::env::temp_dir().join(format!("crabhop-menu-{}", std::process::id()));
@@ -3141,7 +2755,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 
 		let mut session = session(vec![ format!("reveal {}", at.display()) ]);
 
-		// the fixture's own directory has two rows: the landing is when both show
 		let mut landed = false;
 		for _ in 0..240 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -3165,14 +2778,11 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			session.app.menu_state_for_tests()
 		};
 
-		// the file's own row (directories sort first, so it is the second row): the file family and
-		// the applications — four rows (P33⑱'s roster) — and Esc puts the menu away
 		session.app.rehearse(vec![ "menu 1".to_owned() ]);
 		assert_eq!(step(&mut session, Some(("main", 4))), Some(("main", 4)), "a file's menu is four rows");
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
 		assert_eq!(step(&mut session, None), None);
 
-		// the folder's own row: a terminal and the applications
 		session.app.rehearse(vec![ "reveal ".to_owned() + dir.join("sub").to_str().unwrap() ]);
 		for _ in 0..60 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -3181,7 +2791,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		session.app.rehearse(vec![ "menu 0".to_owned() ]);
 		assert_eq!(step(&mut session, Some(("main", 5))), Some(("main", 5)), "a folder's menu has five");
 
-		// `j` walks down to the applications — past the family and the terminal — and Enter takes it
 		session.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		let apps = {
 			let mut state = None;
@@ -3200,11 +2809,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			"the directory's applications page: {apps:?} (this machine has none?"
 		);
 
-		// (P37③: Enter on the applications list launches the standing row at once — there is no
-		// confirm page to walk to any more. The launch's own door is asserted in the open-with E2E,
-		// whose pick is a `Terminal=true` entry and so hears the dry record instead of a window.)
-
-		// Esc backs out a page at a time, and closes the last one
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
 		assert_eq!(step(&mut session, Some(("main", 5))), Some(("main", 5)), "Esc steps back to the items");
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
@@ -3213,8 +2817,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// An opening that failed is said out loud (P30): the same message a refusing launcher sends
-	/// raises the warn toast that names the file, and the frame carries its words.
 	#[test]
 	fn a_failed_opening_raises_the_toast() {
 		let mut session = session(Vec::new());
@@ -3233,7 +2835,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		assert_eq!(said.as_deref(), Some("没有设置打开 a.zzz 的程序"));
 
-		// and the toast is on the frame: its warn-coloured face stands in the corner it lives in
 		let tokens = Tokens::MOCHA;
 		let image = session.shoot();
 		let (body, shares) = session.app.layout();
@@ -3251,9 +2852,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert!(said_on_screen > 0, "the toast's own colour is on the frame: {said_on_screen} pixels");
 	}
 
-	/// The archive tree folds under the pointer (P28's long tail): a Return with the pointer on a
-	/// folder's row opens it — the folder's own file comes out — where a Return anywhere else is
-	/// the window's own `open`, which the pane's own test covers for the file rows.
 	#[test]
 	fn an_archive_folder_opens_under_the_pointer() {
 		use std::io::Write;
@@ -3282,7 +2880,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 
 		let mut session = session(vec![ format!("reveal {}", zip.display()) ]);
 
-		// the tree has to land before a gesture means anything
 		let mut rows = None;
 		for _ in 0..240 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -3294,7 +2891,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		assert_eq!(rows, Some(4), "the first level opens, deep stays shut");
 
-		// the pointer goes to the shut folder's own row — read from the tree, not from arithmetic
 		let tree = session.app.preview_archive_tree_for_tests().expect("the rows are laid out");
 		let (_, rect, _) = *tree.iter().find(|(at, _, dir)| *at == 1 && *dir).expect("the folder's row");
 		let at = rect.center();
@@ -3314,10 +2910,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// Ctrl+S in the index panel saves what the box holds when what it holds is a path — a file
-	/// included, and not the file's parent; a bare search word still saves the directory the
-	/// window stands in. The save writes state, so the test points the state dir at a directory
-	/// of its own for as long as it runs.
 	#[test]
 	fn the_index_saves_what_the_box_holds_and_not_its_parent() {
 		let tmp = std::env::temp_dir().join(format!("crabhop-index-{}", std::process::id()));
@@ -3349,7 +2941,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let dir = std::env::temp_dir().join(format!("crabhop-index-files-{}", std::process::id()));
 		std::fs::create_dir_all(&dir).expect("a dir of the test's own");
 		std::fs::write(dir.join("note.txt"), b"x").expect("a file of the test's own");
-		// the box takes the keyboard only after a second i (P33⑬): the typing goes to the list first
 		held.app.rehearse(vec![ "key i".to_owned(), format!("type {}", dir.join("note.txt").display()), "key C-s".to_owned() ]);
 		settle(&mut held);
 		let saved = held.app.bookmarked_paths();
@@ -3375,10 +2966,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&tmp);
 	}
 
-	/// The index panel's focus machine (P33⑬): the same two-stage one the help panel has — the list
-	/// first, `i` again into the box (the user's final ruling: press `i` twice and you are typing),
-	/// Esc back out, a second Esc to close. The replay's steps stand 350ms apart, so each wait below
-	/// is longer than one step.
 	#[test]
 	fn the_index_opens_on_its_list_and_f_steps_into_the_box() {
 		let wait = |s: &mut Session, frames: usize| {
@@ -3399,19 +2986,16 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		assert_eq!(s.app.fuzzy_focus_for_tests(), Some(false), "the panel opens with the list holding the keyboard");
 
-		// a word typed on the list types nothing (P33⑬): one step, then time for it to have run
 		s.app.rehearse(vec![ "type 回收".to_owned() ]);
 		wait(&mut s, 40);
 		assert_eq!(s.app.fuzzy_query_for_tests().as_deref(), Some(""), "the list does not feed the box");
 		assert_eq!(s.app.fuzzy_focus_for_tests(), Some(false), "and the list still has the keyboard");
 
-		// a second `i` steps in; the same word now filters
 		s.app.rehearse(vec![ "key i".to_owned(), "type 回收".to_owned() ]);
 		wait(&mut s, 80);
 		assert_eq!(s.app.fuzzy_focus_for_tests(), Some(true), "the second i puts the keyboard in the box");
 		assert_eq!(s.app.fuzzy_query_for_tests().as_deref(), Some("回收"), "and the box holds what was typed");
 
-		// Esc steps out of the box; the panel stands; a second Esc closes it
 		s.app.rehearse(vec![ "key Escape".to_owned() ]);
 		wait(&mut s, 40);
 		assert_eq!(s.app.fuzzy_focus_for_tests(), Some(false), "the first Esc steps back to the list");
@@ -3421,10 +3005,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert_eq!(s.app.fuzzy_query_for_tests(), None, "the second Esc closes the panel");
 	}
 
-	/// The column and sort families still act (P33⑭'s guard, now under P33⑲'s model): the chords
-	/// answer, and what they answer with is the column set. `m p` adds a column without touching
-	/// the others, `m o` stacks on top of it, `m b` replaces the time, `m n` resets, and `,m` makes
-	/// the time stand without ever toggling it away.
 	#[test]
 	fn the_column_and_sort_families_still_act() {
 		use crate::keys::{Col, Columns, ColumnsDo, SortBy, TimeCol};
@@ -3440,8 +3020,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert_eq!(s.app.columns_for_tests(), Columns::default(), "the window opens on the default set: size and modification time");
 		assert_eq!(s.app.sort_for_tests(), (SortBy::Name, false), "and on the name, ascending");
 
-		// ② the toggles stack: m p adds the permissions, m O the owner (P36④'s case-shift), and
-		// neither touches the rest
 		s.app.rehearse(vec![ "key m".to_owned(), "key p".to_owned() ]);
 		wait(&mut s, 60);
 		assert_eq!(
@@ -3457,7 +3035,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			"m O stacked the owner on top (P36④'s case-shift from m o): three columns stand together"
 		);
 
-		// ③ the time pair replaces, never piles: m b takes the modification time's place
 		s.app.rehearse(vec![ "key m".to_owned(), "key b".to_owned() ]);
 		wait(&mut s, 60);
 		assert_eq!(
@@ -3473,13 +3050,10 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			"and a second m b closes the time column"
 		);
 
-		// ⑤ m n is the one-key reset back to the default set
 		s.app.rehearse(vec![ "key m".to_owned(), "key n".to_owned() ]);
 		wait(&mut s, 60);
 		assert_eq!(s.app.columns_for_tests(), Columns::default(), "m n reset the columns");
 
-		// ⑦ the sort family's verb is show: ,m makes the time stand (already the default here) and
-		// ,M reverses the sort without touching the columns
 		s.app.rehearse(vec![ "key ,".to_owned(), "key m".to_owned() ]);
 		wait(&mut s, 60);
 		assert_eq!(s.app.sort_for_tests(), (SortBy::Mtime, false), ",m still sorts by modification time");
@@ -3488,13 +3062,9 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		wait(&mut s, 60);
 		assert_eq!(s.app.sort_for_tests(), (SortBy::Mtime, true), ",M still reverses it");
 
-		// the old verb names parse to the same actions — the keys' own test holds that (a keymap
-		// from before the column model still loads); here only that the imports all answer
 		let _ = (Col::Owner, ColumnsDo::Reset);
 	}
 
-	/// P33⑮: the `+` stands beside the last chip and steps right with every tab — the browser's own
-	/// habit, measured (the frames are kept separately, in p33/).
 	#[test]
 	fn the_plus_follows_the_last_chip() {
 		let mut s = session(Vec::new());
@@ -3502,7 +3072,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let one = s.app.plus_hit_for_tests().expect("the strip drew its plus");
 		let close = s.app.close_hit_for_tests().expect("and the corner drew its close");
 
-		// two creations, which are `t t` now (P33④): each is a chord of its own
 		s.app.rehearse(vec![ "key t".to_owned(), "key t".to_owned(), "key t".to_owned(), "key t".to_owned() ]);
 		for _ in 0..80 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -3519,8 +3088,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert_eq!(one.center().y, three.center().y, "the strip's own line, never a new one");
 	}
 
-	/// P33⑯: a press on the corner's × asks the window to close — the harness catches the very
-	/// command the frame sent, no question and no confirmation in between.
 	#[test]
 	fn the_corner_close_asks_the_window_to_close() {
 		let mut s = session(Vec::new());
@@ -3533,9 +3100,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert!(s.close_requested(), "the press sent the close command");
 	}
 
-	/// P33⑰: the status bar's own 索引 button opens the panel the `i` key opens — the same door,
-	/// Action::Index's arm — wears its accent while the panel stands, and a second press is the way
-	/// out. The key's own door is checked beside it, so the two are known to be one.
 	#[test]
 	fn the_status_bar_opens_the_index_and_says_so() {
 		let mut s = session(Vec::new());
@@ -3556,8 +3120,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		assert!(!s.app.index_open() && s.app.fuzzy_query_for_tests().is_none(), "the second click closed it");
 
-		// the key's own door is the same one: `i` opens it, and Esc closes it — the list holding
-		// the keyboard, so the first Esc is the panel's own
 		s.app.rehearse(vec![ "key i".to_owned() ]);
 		for _ in 0..40 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -3578,9 +3140,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert!(!s.app.index_open(), "and Esc closes it");
 	}
 
-	/// P33⑱, the user's own rule measured: right-clicking a folder offers paste, and its landing
-	/// point is the window's own directory — the folder's parent, beside it — never inside the
-	/// folder that was right-clicked. The file comes from one level up, so the two are told apart.
 	#[test]
 	fn the_menu_pastes_beside_the_folder_it_was_opened_on() {
 		let dir = std::env::temp_dir().join(format!("crabhop-menu-paste-{}", std::process::id()));
@@ -3619,7 +3178,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		assert_eq!(session.app.cwd_for_tests(), dir.join("dst"), "the window stands in dst");
 
-		// the folder's own row, right-clicked: the paste stands three rows down (copy, cut, paste)
 		session.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		for _ in 0..60 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -3637,8 +3195,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// P33⑱: a right click inside a selection copies the whole selection — the menu's copy calls
-	/// the same `yank` the `y` key does, whose targets are the selection when one is held.
 	#[test]
 	fn the_menu_copies_the_selection_when_one_is_held() {
 		let dir = std::env::temp_dir().join(format!("crabhop-menu-copy-{}", std::process::id()));
@@ -3655,8 +3211,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		}
 		assert_eq!(session.app.cwd_for_tests(), dir.join("two"), "the reveal stood in the pair's directory");
 
-		// two rows held (no factory key toggles a selection — the person writes their own), then a
-		// right click on the first of them: the menu's own copy is its first row
 		let (a, b) = (dir.join("two").join("a.txt"), dir.join("two").join("b.txt"));
 		session.app.hold_selection_for_tests(vec![ a.clone(), b.clone() ]);
 		session.app.rehearse(vec![ "menu 0".to_owned(), "key Enter".to_owned() ]);
@@ -3675,9 +3229,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// P33⑲'s own pixel word: the columns are drawn, not merely held. Opening the permissions and
-	/// the owner puts their glyphs into the fact band, and the picture says so — the frames the
-	/// replay keeps (p33/columns-*.png) are this assertion's archive.
 	#[test]
 	fn the_fact_band_widens_as_the_columns_open() {
 		use crate::keys::{Columns, TimeCol};
@@ -3726,9 +3277,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		);
 	}
 
-	/// P33④'s own guard, the user's named danger: once `t` has opened its chord, the second key is
-	/// the family's alone. `q` closes the tab and never reaches the global quit; `Esc` cancels the
-	/// chord so a later `q` is global again; and a bare `q` still quits.
 	#[test]
 	fn the_t_chord_owns_its_second_key() {
 		let wait = |s: &mut Session, frames: usize| {
@@ -3738,7 +3286,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			}
 		};
 
-		// a bare q, with no chord under it, is the global quit
 		let mut plain = session(Vec::new());
 		plain.shoot();
 		assert!(!plain.close_requested(), "nothing has asked yet");
@@ -3746,7 +3293,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		wait(&mut plain, 60);
 		assert!(plain.close_requested(), "a bare q quits");
 
-		// t t makes a tab, t q closes it — and that q is the family's own, not the quit
 		let mut chord = session(Vec::new());
 		chord.shoot();
 		let tabs = chord.app.tabs_for_tests();
@@ -3758,7 +3304,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert_eq!(chord.app.tabs_for_tests(), tabs, "t q closed the tab");
 		assert!(!chord.close_requested(), "and the q inside the chord never reached the global quit");
 
-		// Esc cancels the chord without acting: the next key is global again, and that q quits
 		let mut cancelled = session(Vec::new());
 		cancelled.shoot();
 		cancelled.app.rehearse(vec![ "key t".to_owned(), "key Escape".to_owned(), "key q".to_owned() ]);
@@ -3767,17 +3312,10 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		assert!(cancelled.close_requested(), "after Esc cancelled the chord, q is the global quit again");
 	}
 
-	/// P34's own rendering guard, from the orchestrator's eyes on the frame: in the middle column a
-	/// row's whole name must be drawn, character by character. The sandbox's names are all the
-	/// same length and every extension is a different kind, so each row of the column can be
-	/// measured against egui's own layout its own name — and a missing letter is exactly one cell
-	/// without ink.
 	#[test]
 	fn the_middle_column_draws_the_whole_name_beside_a_table_icon() {
 		use crate::tokens::{FONT_SIZE, ICON_BOX};
 
-		// twenty-eight names, seven characters each, one extension apiece — the table's own kinds
-		// and one it does not know (the fallback), every one of them the same width
 		let exts = [
 			"png", "jpg", "gif", "svg", "webp", "mp3", "flac", "ogg", "mp4", "mkv", "mov", "zip", "tar", "gz", "7z", "pdf",
 			"doc", "docx", "xls", "csv", "md", "txt", "json", "toml", "yaml", "rs", "py", "zzz",
@@ -3802,8 +3340,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let font = egui::FontId::new(FONT_SIZE, egui::FontFamily::Monospace);
 		let advance = s.ctx.fonts_mut(|fonts| fonts.layout_no_wrap("0".to_owned(), font.clone(), egui::Color32::WHITE).size().x);
 
-		// each round reads the rows from where the list actually stands: the replay's `scroll`
-		// clamps at the column's own last page, so the top row is the offset, not the number asked
 		let inspect = |s: &mut Session, want: &[String]| {
 			let first = s.app.scroll_offset_for_tests();
 			let image = s.shoot();
@@ -3817,7 +3353,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 				if top + ROW_HEIGHT > current.max.y {
 					break;
 				}
-				// each character of the name owns one cell: ink must stand in every one of them
 				for (at, ch) in name.chars().enumerate() {
 					let from = name_start + at as f32 * advance + 1.0;
 					let to = name_start + (at + 1) as f32 * advance - 1.0;
@@ -3840,8 +3375,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 
 		inspect(&mut s, &names);
 
-		// and the same again with the list scrolled, which is where the eyes caught it: the four
-		// rows the scroll brings in are the four to read
 		s.app.rehearse(vec![ "scroll 24".to_owned() ]);
 		for _ in 0..60 {
 			std::thread::sleep(Duration::from_millis(16));
@@ -3851,9 +3384,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let visible: Vec<String> = names[offset..].to_vec();
 		inspect(&mut s, &visible);
 
-		// and the same reading with the names the eyes had: long ones — ten to thirteen characters,
-		// the lengths where a missing letter is likeliest — with the same extensions, scrolled by
-		// the six rows the evidence frame's own replay asked for
 		let long: Vec<String> = [
 			"settings.yaml", "engine.cpp", "bundle.zip", "script.sh", "dockerfile", "cargo.toml", "makefile", "license",
 			"index.js", "init.lua", "main.go", "main.rs", "mod.ts", "notes.md", "page.html", "paper.pdf", "photo.png",
@@ -3863,8 +3393,6 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		.iter()
 		.map(|name| (*name).to_owned())
 		.collect();
-		// the column's own order is the names ascending — the table below is read in that order, so
-		// the list must be in it too
 		let mut long: Vec<String> = long;
 		long.sort();
 		let dir2 = std::env::temp_dir().join(format!("crabhop-icon-long-{}", std::process::id()));

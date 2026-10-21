@@ -1,12 +1,3 @@
-//! The freedesktop thumbnail cache: the same PNGs the user's other file managers read and write.
-//!
-//! `$XDG_CACHE_HOME/thumbnails/{normal,large}/<md5 of the file's URI>.png`, each carrying
-//! `Thumb::URI`, `Thumb::MTime` and `Thumb::Size` in tEXt chunks. A cached thumbnail is only used
-//! while those agree with the file itself, and one this window makes is written the same way,
-//! atomically and for the owner only — a cache that is shared, not owned.
-//!
-//! Moved here from the legacy window as-is: the format is an
-//! interop contract, not an implementation.
 
 use std::{
 	path::PathBuf,
@@ -14,11 +5,8 @@ use std::{
 	time::{SystemTime, UNIX_EPOCH},
 };
 
-/// The sizes the standard names, largest first: the column wants the bigger one, and a smaller
-/// one is still better than a decode.
 const BOXES: [(u32, &str); 2] = [ (256, "large"), (128, "normal") ];
 
-/// What the cache calls a file, and what a thumbnail of it must agree with.
 pub(crate) struct Thumb {
 	uri:   String,
 	hash:  String,
@@ -42,14 +30,12 @@ impl Thumb {
 		}
 	}
 
-	/// A thumbnail of this file from the cache, if one is there and still describes it.
 	pub(crate) fn load(&self) -> Option<Vec<u8>> {
 		for (_, dir) in BOXES {
 			let Ok(png) = std::fs::read(cache_dir(dir).join(format!("{}.png", self.hash))) else {
 				continue;
 			};
 
-			// the cache is somebody else's writing: its size is bounded before anything decodes it
 			let Ok(dimensions) = dimensions(&png) else { continue };
 			let (width, height) = (dimensions.0, dimensions.1);
 			if width == 0 || height == 0 || width > 1024 || height > 1024 {
@@ -66,9 +52,6 @@ impl Thumb {
 		None
 	}
 
-	/// Whether a cached thumbnail still describes the file. The standard asks for the URI first —
-	/// a thumbnail of another file is not a thumbnail, whatever its times say — and then for the
-	/// modification time, with the size checked when the thumbnail names one.
 	fn accepts(&self, texts: &[(String, String)]) -> bool {
 		let value = |key: &str| texts.iter().find(|(k, _)| k == key).map(|(_, v)| v.trim());
 
@@ -87,9 +70,6 @@ impl Thumb {
 		true
 	}
 
-	/// A thumbnail that could not be made: the standard's `fail/` marker, so the other windows and
-	/// file managers do not try the same broken file over and over. A one-pixel PNG, because the
-	/// marker only has to exist.
 	pub(crate) fn failed(&self) {
 		if self.mtime == 0 {
 			return;
@@ -101,10 +81,6 @@ impl Thumb {
 		}
 	}
 
-	/// Offer a thumbnail of a decoded file to the cache, for the other windows and file managers to
-	/// find. Only a full decode, only with a modification time to judge it by and only for a picture
-	/// bigger than the thumbnails themselves — a 16-pixel icon is not worth one. Best effort by
-	/// design: a cache that cannot be written costs a decode next time, not an error now.
 	pub(crate) fn store(&self, size: [u32; 2], rgba: &[u8]) {
 		if self.mtime == 0 || size[0] < 128 || size[1] < 128 {
 			return;
@@ -131,14 +107,9 @@ impl Thumb {
 	}
 }
 
-/// A thumbnail-sized copy, resampled by the resizer rather than by a filter that walks the source
-/// a pixel at a time — a photograph is sixteen times the width of a thumbnail.
 fn shrink(image: &image::RgbaImage, box_side: u32) -> Option<image::RgbaImage> {
 	use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image};
 
-	// the standard's own rule: a thumbnail keeps the picture's proportions inside the box — a
-	// square thumbnail of an oblong picture is a thumbnail no one accepts (P27⑥: the shape the
-	// reader checks is the shape that must be written)
 	let (w, h) = crate::preview::img::fit((image.width(), image.height()), [ box_side, box_side ]);
 	if w == 0 || h == 0 {
 		return None;
@@ -157,10 +128,8 @@ fn shrink(image: &image::RgbaImage, box_side: u32) -> Option<image::RgbaImage> {
 	image::RgbaImage::from_raw(w, h, dst.into_vec())
 }
 
-/// What our own `fail/` markers live under, so they can be told from another tool's.
 const FILE: &str = concat!("crabhop-", env!("CARGO_PKG_VERSION"));
 
-/// A PNG with the standard's metadata, written by the crate that owns the format.
 fn encode(image: &image::RgbaImage, texts: &[(&str, &str)]) -> Option<Vec<u8>> {
 	let mut png = Vec::new();
 	{
@@ -180,7 +149,6 @@ fn encode(image: &image::RgbaImage, texts: &[(&str, &str)]) -> Option<Vec<u8>> {
 	Some(png)
 }
 
-/// The tEXt chunks of a PNG, as `(key, value)` pairs.
 fn texts(png: &[u8]) -> Vec<(String, String)> {
 	let Ok(reader) = png::Decoder::new(std::io::Cursor::new(png)).read_info() else {
 		return Vec::new();
@@ -194,15 +162,11 @@ fn texts(png: &[u8]) -> Vec<(String, String)> {
 		.collect()
 }
 
-/// A PNG's own dimensions, read from its header without decoding a pixel.
 fn dimensions(png: &[u8]) -> Result<(u32, u32), ()> {
 	let reader = png::Decoder::new(std::io::Cursor::new(png)).read_info().map_err(|_| ())?;
 	Ok((reader.info().width, reader.info().height))
 }
 
-/// The file's URI the way the standard's other implementations spell it: `file://` and the path,
-/// percent-encoded where it is not safe to put in a URI as it stands. Shared with the copy-URL
-/// verbs, which must spell a URI exactly this way.
 pub(crate) fn file_uri(path: &str) -> String {
 	let mut out = String::from("file://");
 
@@ -236,7 +200,6 @@ fn mime_of(path: &str) -> &'static str {
 	}
 }
 
-/// `$XDG_CACHE_HOME/thumbnails/<name>`, or `~/.cache/thumbnails/<name>` — the standard's home.
 fn cache_dir(name: &str) -> PathBuf {
 	let base = std::env::var_os("XDG_CACHE_HOME")
 		.map(PathBuf::from)
@@ -246,14 +209,11 @@ fn cache_dir(name: &str) -> PathBuf {
 	base.join("thumbnails").join(name)
 }
 
-/// A cache file appears whole or not at all: a reader in another window must never find half of
-/// one, so it is written beside its name and moved onto it.
 fn write_atomically(path: &PathBuf, bytes: &[u8]) {
 	let Some(dir) = path.parent() else { return };
 	if std::fs::create_dir_all(dir).is_err() {
 		return;
 	}
-	// the cache is the user's alone: the standard asks for owner-only access
 	if let Ok(meta) = std::fs::metadata(dir)
 		&& !meta.permissions().readonly()
 	{
@@ -273,8 +233,6 @@ fn write_atomically(path: &PathBuf, bytes: &[u8]) {
 	let _ = std::fs::rename(&tmp, path);
 }
 
-/// MD5 (RFC 1321), which the standard uses to name a thumbnail after its file's URI — the same
-/// digest every other implementation computes, and small enough to keep rather than depend on.
 pub(crate) fn md5_hex(input: &[u8]) -> String {
 	const SHIFT: [u32; 64] = [
 		7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, //
@@ -282,7 +240,6 @@ pub(crate) fn md5_hex(input: &[u8]) -> String {
 		4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, //
 		6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
 	];
-	// K[i] = floor(abs(sin(i + 1)) * 2^32), the table the RFC prints
 	static K: LazyLock<[u32; 64]> =
 		LazyLock::new(|| std::array::from_fn(|i| ((i as f64 + 1.0).sin().abs() * 4294967296.0) as u32));
 
@@ -337,19 +294,14 @@ pub(crate) fn md5_hex(input: &[u8]) -> String {
 mod tests {
 	use super::*;
 
-	/// The digest has to agree with the rest of the world, so it is checked against the RFC's own
-	/// examples rather than against itself.
 	#[test]
 	fn md5_matches_the_rfc() {
 		assert_eq!(md5_hex(b""), "d41d8cd98f00b204e9800998ecf8427e");
 		assert_eq!(md5_hex(b"abc"), "900150983cd24fb0d6963f7d28e17f72");
 		assert_eq!(md5_hex(b"The quick brown fox jumps over the lazy dog"), "9e107d9d372bb6826bd81d3542a419d6");
-		// longer than one block, and one whose padding needs a block of its own
 		assert_eq!(md5_hex(b"message digest"), "f96b697d7cb7938d525a2f31aaf161d0");
 	}
 
-	/// A URI is what the other implementations hash, so the escaping has to be theirs: anything
-	/// that is not safe in a URI is percent-encoded, including every non-ASCII byte.
 	#[test]
 	fn a_file_uri_escapes_what_a_uri_cannot_carry() {
 		assert_eq!(file_uri("/home/user/plain.jpg"), "file:///home/user/plain.jpg");
@@ -358,8 +310,6 @@ mod tests {
 		assert_eq!(file_uri("/home/q?x#y.png"), "file:///home/q%3Fx%23y.png");
 	}
 
-	/// A thumbnail is judged against the file, not against itself: the URI first, then the
-	/// modification time, and the size when the thumbnail names one.
 	#[test]
 	fn a_thumbnail_is_only_used_when_it_still_describes_the_file() {
 		let mut thumb = Thumb::of("/home/user/x.png", None, 100);
@@ -381,8 +331,6 @@ mod tests {
 		assert!(thumb.accepts(&texts(&thumb.uri, "7 ", "100 ")), "padding around the numbers is no difference");
 	}
 
-	/// The metadata the standard asks for survives the round trip, written by the `png` crate's own
-	/// text chunks rather than by hand — the other implementations have to be able to read it.
 	#[test]
 	fn the_metadata_round_trips_through_the_png() {
 		let image = fixture();
@@ -407,8 +355,6 @@ mod tests {
 		assert_eq!(dimensions(&encoded), Ok((4, 4)), "and it is still a 4x4 picture");
 	}
 
-	/// A cached file is somebody else's writing: half a PNG, or one with absurd dimensions, is not
-	/// decoded and not trusted.
 	#[test]
 	fn a_bad_cache_file_is_not_believed() {
 		let png = encode(&fixture(), &[]).expect("a thumbnail");

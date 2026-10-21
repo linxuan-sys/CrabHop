@@ -1,6 +1,3 @@
-//! `p` / `P`: what the yank state holds, put down beside the cursor — on a thread of its own, the
-//! way every other byte-mover in this window works. A copy walks a directory tree; a cut is a
-//! rename, and only falls back to a copy when the destination is on another filesystem.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -10,7 +7,6 @@ pub(crate) struct Job<T> {
 }
 
 impl<T> Job<T> {
-	/// The answer, if it has landed: `None` means the work is still going.
 	pub(crate) fn poll(&self) -> Option<Result<T, String>> {
 		match self.rx.try_recv() {
 			Ok(result) => Some(result),
@@ -20,18 +16,12 @@ impl<T> Job<T> {
 	}
 }
 
-/// What a paste left behind: how many landed, and the (source, destination) pairs in the order
-/// they were walked — the undo of a change-type task reads the pairs back (P33⑫).
 #[derive(Debug)]
 pub(crate) struct Done {
 	pub(crate) count:  usize,
 	pub(crate) pairs: Vec<(PathBuf, PathBuf)>,
 }
 
-/// Put `paths` into `dest`: a cut moves them, a copy leaves them where they are. `force` overwrites
-/// a name already standing at the destination; without it, the caller has asked and got its answer.
-/// Nothing standing is ever removed before the new bytes have landed under a temporary name: a
-/// paste that fails halfway leaves both the source and the old destination exactly as they were.
 pub(crate) fn run(paths: Vec<PathBuf>, dest: PathBuf, cut: bool, force: bool) -> Job<Done> {
 	let (tx, rx) = std::sync::mpsc::channel();
 	std::thread::spawn(move || {
@@ -40,7 +30,6 @@ pub(crate) fn run(paths: Vec<PathBuf>, dest: PathBuf, cut: bool, force: bool) ->
 			let Some(name) = path.file_name() else { continue };
 			let to = dest.join(name);
 
-			// a name pasted onto itself would eat the very file it carries: refuse, touch nothing
 			if same_file(path, &to) {
 				tx.send(Err(format!("{}: 来源与目标是同一个", crate::frecency::display(path)))).ok();
 				return;
@@ -49,7 +38,6 @@ pub(crate) fn run(paths: Vec<PathBuf>, dest: PathBuf, cut: bool, force: bool) ->
 				tx.send(Err(format!("{} 已存在", crate::frecency::display(&to)))).ok();
 				return;
 			}
-			// a directory in the way cannot be renamed over: with force it goes first, and only it
 			if force && to.symlink_metadata().is_ok_and(|m| m.is_dir())
 				&& let Err(e) = remove(&to)
 			{
@@ -58,8 +46,6 @@ pub(crate) fn run(paths: Vec<PathBuf>, dest: PathBuf, cut: bool, force: bool) ->
 			}
 
 			let result = if cut {
-				// one rename hands the name over, replacing what force allowed; only another
-				// filesystem falls back to a copy that then takes the original away
 				match std::fs::rename(path, &to) {
 					Ok(()) => Ok(()),
 					Err(_) => copy(path, &to).and_then(|()| remove(path)),
@@ -82,10 +68,6 @@ pub(crate) fn run(paths: Vec<PathBuf>, dest: PathBuf, cut: bool, force: bool) ->
 	Job { rx }
 }
 
-/// Walk a moved set back where it came from (P33⑫'s undo of a cut-paste): one rename per pair,
-/// with the same cross-device fallback a cut paste has. A destination that is already gone is
-/// skipped — there is nothing to walk back — and a name standing at the source stops the walk
-/// rather than overwriting it.
 pub(crate) fn move_back(pairs: Vec<(PathBuf, PathBuf)>) -> Job<Done> {
 	let (tx, rx) = std::sync::mpsc::channel();
 	std::thread::spawn(move || {
@@ -114,15 +96,10 @@ pub(crate) fn move_back(pairs: Vec<(PathBuf, PathBuf)>) -> Job<Done> {
 	Job { rx }
 }
 
-/// The same file under two spellings (a destination reached through a link, a `.` in the road):
-/// only a destination that stands can be compared, an absent one is simply not the source.
 fn same_file(path: &Path, to: &Path) -> bool {
 	path == to || matches!((std::fs::canonicalize(path), std::fs::canonicalize(to)), (Ok(a), Ok(b)) if a == b)
 }
 
-/// A file, a directory with its children, or a link — links go as links. The bytes land under a
-/// temporary sibling and one rename hands the name over, so a failure halfway leaves whatever
-/// stood at `to` untouched and no half-built tree behind.
 fn copy(from: &Path, to: &Path) -> Result<(), String> {
 	let meta = std::fs::symlink_metadata(from).map_err(|e| e.to_string())?;
 	let tmp = temp_name(to);
@@ -154,7 +131,6 @@ fn copy(from: &Path, to: &Path) -> Result<(), String> {
 	}
 }
 
-/// Straight into a tree that is already ours (the temporary one): no standing names to replace.
 fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 	let meta = std::fs::symlink_metadata(from).map_err(|e| e.to_string())?;
 
@@ -174,7 +150,6 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 	std::fs::copy(from, to).map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// A hidden sibling name nobody holds yet.
 fn temp_name(to: &Path) -> PathBuf {
 	static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 	let mut name = std::ffi::OsString::from(".crabhop-paste-");
@@ -197,8 +172,6 @@ fn remove(path: &Path) -> Result<(), String> {
 mod tests {
 	use super::*;
 
-	/// A copy carries a directory with its children and leaves the original standing; a cut takes
-	/// it away — and a name already at the destination is an error unless the caller forced it.
 	#[test]
 	fn a_copy_leaves_the_original_and_a_cut_does_not() {
 		let dir = std::env::temp_dir().join(format!("crabhop-paste-{}", std::process::id()));
@@ -226,7 +199,6 @@ mod tests {
 		assert_eq!(forced.map(|done| done.count), Ok(1), "the forced cut landed");
 		assert!(!dir.join("src").exists(), "a cut takes the original away");
 
-		// and P33⑫'s undo walks the pieces of a cut back: the pairs are (source, destination)
 		std::fs::create_dir_all(dir.join("back")).expect("a second destination");
 		let there = answer(run(vec![ dir.join("dst/src") ], dir.join("back"), true, true));
 		assert_eq!(there.map(|done| done.count), Ok(1), "a cut into a second destination");
@@ -237,7 +209,6 @@ mod tests {
 		assert!(dir.join("dst/src/sub/a.txt").exists(), "to where it came from");
 		assert!(!dir.join("back/src").exists(), "and the destination is whole again");
 
-		// a destination that is already gone is skipped; a name standing at the source stops it
 		let gone = answer(move_back(vec![ (dir.join("dst/src"), dir.join("nowhere")) ]));
 		assert_eq!(gone.map(|done| done.count), Ok(0), "nothing to walk back");
 		std::fs::create_dir_all(dir.join("standing")).expect("a name at the source");
@@ -247,10 +218,6 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// The hole the sixth round of acceptance found: a force paste into the directory the source
-	/// itself lives in used to remove the source and then fail — the file gone, no trash, nothing.
-	/// It refuses now and touches nothing; and a force paste whose copy fails keeps the old
-	/// destination standing, with no half-built temporary left behind.
 	#[test]
 	fn a_force_paste_onto_itself_keeps_the_file_and_a_failed_one_keeps_the_old() {
 		let dir = std::env::temp_dir().join(format!("crabhop-paste-self-{}", std::process::id()));
@@ -266,14 +233,12 @@ mod tests {
 			std::thread::sleep(std::time::Duration::from_millis(5));
 		};
 
-		// cut and copy alike: the name lands on itself, so nothing may happen at all
 		for cut in [true, false] {
 			let onto_itself = answer(run(vec![ dir.join("a.txt") ], dir.clone(), cut, true));
 			assert!(onto_itself.is_err(), "{onto_itself:?}");
 			assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"the source", "the source survives its own force paste");
 		}
 
-		// an unreadable source makes the copy fail: the old destination must still stand, whole
 		std::fs::write(dir.join("src.txt"), b"secret").expect("a source to fail");
 		std::fs::set_permissions(dir.join("src.txt"), std::os::unix::fs::PermissionsExt::from_mode(0o000)).expect("sealed");
 		let failed = answer(run(vec![ dir.join("src.txt") ], dir.join("dst"), false, true));

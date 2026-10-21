@@ -1,14 +1,4 @@
-//! yazi's preset icon table, adapted verbatim (P34's re-source, the user's own ruling).
-//!
-//! Source: yazi (https://github.com/sxyazi/yazi), `.yazi` preset `theme-dark.toml`'s
-//! `[icon]` section — `dirs`, `files` and `exts` — with each rule's own `text` (a Nerd Font
-//! glyph) and `fg` (kept as the original hex constant: the coordination is what the table is
-//! loved for, so the colours stay yazi's and the window's own Catppuccin tokens are not mixed
-//! in). Licensed under the MIT License, Copyright (c) 2023 - sxyazi — see the repository's
-//! NOTICE file. Generated from the preset by `crabhop/tools/yazi_icons.py`, not by hand.
 
-/// The directory names: 14 rules, matched exactly (yazi's own order, which is its
-/// precedence too).
 pub(super) const DIRS: &[(&str, &str, u32)] = &[
 	(".config", "\u{e5fc}", 0xff9800),
 	(".git", "\u{e5fb}", 0x00bcd4),
@@ -26,8 +16,6 @@ pub(super) const DIRS: &[(&str, &str, u32)] = &[
 	("Videos", "\u{f447}", 0x00bcd4),
 ];
 
-/// The file names: 214 rules, matched exactly — the names a project is known by and
-/// this table is where that list lives.
 pub(super) const FILES: &[(&str, &str, u32)] = &[
 	(".babelrc", "\u{e639}", 0xcbcb41),
 	(".bash_profile", "\u{e615}", 0x89e051),
@@ -245,7 +233,6 @@ pub(super) const FILES: &[(&str, &str, u32)] = &[
 	("xsettingsd.conf", "\u{f369}", 0xe54d18),
 ];
 
-/// The extensions: 485 rules, matched on the name after the last dot, lowercased.
 pub(super) const EXTS: &[(&str, &str, u32)] = &[
 	("3gp", "\u{e69f}", 0xfd971f),
 	("3mf", "\u{f01a7}", 0x888888),

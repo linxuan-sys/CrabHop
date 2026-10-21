@@ -1,5 +1,3 @@
-//! The bottom command line's engine (§4.8): `sh -c`, off this thread, no pty — a command's output
-//! is text in a panel, not a terminal. The history is a small file in the state directory.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -9,10 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 
-/// How many lines the history keeps, newest last (the spec's 200).
 const HISTORY_CAP: usize = 200;
 
-/// What a finished command said.
 #[derive(Default)]
 pub(crate) struct Outcome {
 	pub code:    Option<i32>,
@@ -21,8 +17,6 @@ pub(crate) struct Outcome {
 }
 
 impl Outcome {
-	/// The panel's body: stdout as it came, then the errors under their own rule — the closest a
-	/// pty-less run gets to reading like a terminal.
 	pub(crate) fn lines(&self) -> Vec<(String, bool)> {
 		let mut lines: Vec<(String, bool)> = self.stdout.lines().map(|line| (line.to_owned(), false)).collect();
 		if !self.stderr.is_empty() {
@@ -36,14 +30,9 @@ impl Outcome {
 	}
 }
 
-/// One command in flight: its name, when it went out, and the wire its answer arrives on.
 pub(crate) struct Job {
-	/// The drawer's × reads this when it lands (N3's next half).
 	pub command: String,
 	pub started: Instant,
-	/// The drawer's own × (N3): set it and the watch kills the command's whole process group. The
-	/// drawer that sets it is the next session's work; until then the field is the hook itself —
-	/// the allow is the marker that says exactly that.
 	#[allow(dead_code)]
 	pub(crate) cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 	rx:          Receiver<Outcome>,
@@ -55,8 +44,6 @@ impl Job {
 	}
 }
 
-/// Run a command with `sh -c` in the directory, on a thread of its own: the window keeps its
-/// frames whatever the command does.
 pub(crate) fn spawn(command: String, cwd: PathBuf, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Job {
 	use std::sync::atomic::Ordering;
 
@@ -74,11 +61,9 @@ pub(crate) fn spawn(command: String, cwd: PathBuf, cancel: std::sync::Arc<std::s
 					.current_dir(&cwd)
 					.stdout(std::process::Stdio::piped())
 					.stderr(std::process::Stdio::piped())
-					// its own process group, so a cancel can take the whole tree down
 					.process_group(0)
 					.spawn()?;
 
-				// the watch: a cancel kills the group; a finished command lets the watch go
 				if let Some(pid) = child.id() {
 					let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 					let inner_watch = watch.clone();
@@ -118,7 +103,6 @@ pub(crate) fn spawn(command: String, cwd: PathBuf, cancel: std::sync::Arc<std::s
 	Job { command, started: Instant::now(), cancel, rx }
 }
 
-/// The command line's history: deduplicated, newest last, capped — the spec's own rules.
 #[derive(Default, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct History {
@@ -133,8 +117,6 @@ impl History {
 			.unwrap_or_default()
 	}
 
-	/// A command that is about to run: it moves to the end, an older twin is forgotten rather
-	/// than repeated, and the oldest gives way at the cap.
 	pub(crate) fn record(&mut self, line: &str) {
 		let line = line.trim();
 		if line.is_empty() {
@@ -166,8 +148,6 @@ impl History {
 mod tests {
 	use super::*;
 
-	/// The drawer's × (N3): a cancelled command's whole process group is killed, and the job says
-	/// so instead of reporting an exit code.
 	#[test]
 	fn a_cancelled_command_is_killed_and_says_so() {
 		use std::sync::atomic::{AtomicBool, Ordering};
@@ -175,7 +155,6 @@ mod tests {
 		let cancel = std::sync::Arc::new(AtomicBool::new(false));
 		let job = spawn("sleep 5".to_owned(), std::env::temp_dir(), cancel.clone());
 
-		// the watch polls every 50ms, so one notch of sleep is enough
 		std::thread::sleep(std::time::Duration::from_millis(120));
 		cancel.store(true, Ordering::Relaxed);
 
@@ -191,8 +170,6 @@ mod tests {
 		assert!(outcome.stderr.contains("已取消"), "{}", outcome.stderr);
 	}
 
-	/// The history never repeats a command and never grows past its cap: the two rules that keep
-	/// an up-arrow useful.
 	#[test]
 	fn the_history_dedupes_and_caps() {
 		let mut history = History::default();
@@ -211,7 +188,6 @@ mod tests {
 		assert_eq!(history.lines.last().map(String::as_str), Some("cmd 202"));
 	}
 
-	/// What a command said reads back as its panel: stdout first, then stderr under its own rule.
 	#[test]
 	fn an_outcome_reads_as_its_panel() {
 		let outcome = Outcome { code: Some(0), stdout: "one\ntwo\n".to_owned(), stderr: "warn\n".to_owned() };

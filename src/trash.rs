@@ -1,25 +1,16 @@
-//! The FreeDesktop recycler (the keymap's `d` / `D` / `R b`), through the `trash` crate: the
-//! system's own bin, not a private one. Every call here moves real bytes about, so each runs on
-//! a thread of its own and the window reads the answer when it lands.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-/// The bin's own item, re-exported so the window can name what the view holds without the crate
-/// and this module fighting over the same noun.
 pub(crate) use trash::TrashItem;
 
-/// The newest first is the order both the undo and the view want to read a bin in.
 use std::cmp::Reverse;
 
-/// A trash operation running off this thread: listing a bin touches every info file in it, and
-/// the window is not going to stand still for that.
 pub(crate) struct Job<T> {
 	rx: Receiver<Result<T, String>>,
 }
 
 impl<T> Job<T> {
-	/// The answer, if it has landed: `None` means the work is still going.
 	pub(crate) fn poll(&self) -> Option<Result<T, String>> {
 		match self.rx.try_recv() {
 			Ok(result) => Some(result),
@@ -37,12 +28,10 @@ fn spawn<T: Send + 'static>(run: impl FnOnce() -> Result<T, String> + Send + 'st
 	Job { rx }
 }
 
-/// `d`: into the system bin — links are removed as links, and their targets stay.
 pub(crate) fn delete(paths: Vec<PathBuf>) -> Job<()> {
 	spawn(move || trash::delete_all(&paths).map_err(|e| e.to_string()))
 }
 
-/// The undo of a delete: the newest trashed twin of each original goes back where it came from.
 pub(crate) fn restore(originals: Vec<PathBuf>) -> Job<()> {
 	spawn(move || {
 		let items = trash::os_limited::list().map_err(|e| e.to_string())?;
@@ -61,7 +50,6 @@ pub(crate) fn restore(originals: Vec<PathBuf>) -> Job<()> {
 	})
 }
 
-/// `R b`: the bin's own list, newest first.
 pub(crate) fn list() -> Job<Vec<trash::TrashItem>> {
 	spawn(|| {
 		let mut items = trash::os_limited::list().map_err(|e| e.to_string())?;
@@ -70,10 +58,6 @@ pub(crate) fn list() -> Job<Vec<trash::TrashItem>> {
 	})
 }
 
-/// Where an item's bytes actually sit: the freedesktop spec keeps them beside the info file, under
-/// the bin's own `files/`, and the crate reads the bin the same way — the info file's stem is the
-/// name in there. `None` for an item whose id is not a path under a bin. Pure, so the rule can be
-/// read without a bin (P19's preview needs the real path).
 pub(crate) fn in_trash(item: &TrashItem) -> Option<PathBuf> {
 	let info = Path::new(&item.id);
 	let root = info.parent()?.parent()?;
@@ -81,14 +65,10 @@ pub(crate) fn in_trash(item: &TrashItem) -> Option<PathBuf> {
 	Some(root.join("files").join(info.file_stem()?))
 }
 
-/// Whether an item is a directory — read from the bin's own copy, for the icon its row wears
-/// (P19 reads it once when the list lands, never in a draw).
 pub(crate) fn is_dir(item: &TrashItem) -> bool {
 	in_trash(item).is_some_and(|path| std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()))
 }
 
-/// A name beside `path` that nothing stands at: `b (1).txt`, `b (2).txt`, … — the way every file
-/// manager spells a second copy. A path that is free is itself.
 pub(crate) fn free_beside(path: &Path) -> PathBuf {
 	if !taken(path) {
 		return path.to_owned();
@@ -104,13 +84,10 @@ pub(crate) fn free_beside(path: &Path) -> PathBuf {
 	numbered(path, 10_000)
 }
 
-/// Whether anything stands at the path at all — a file, a directory, or a link whose target is
-/// gone (the bin's own restore refuses a dangling link too, so a collision it is).
 pub(crate) fn taken(path: &Path) -> bool {
 	std::fs::symlink_metadata(path).is_ok()
 }
 
-/// The n-th name beside `path`: the stem, the counter in brackets, and the extension kept.
 fn numbered(path: &Path, n: usize) -> PathBuf {
 	let stem = path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
 	let count = match path.extension() {
@@ -121,9 +98,6 @@ fn numbered(path: &Path, n: usize) -> PathBuf {
 	path.with_file_name(count)
 }
 
-/// `Enter` on a name the original directory already holds: the bytes go back under the free name
-/// the caller worked out, and the bin's own record is purged — nothing standing at the original
-/// path is touched or overwritten (P19).
 pub(crate) fn restore_as(item: &TrashItem, to: PathBuf) -> Job<()> {
 	let item = item.clone();
 	spawn(move || {
@@ -133,18 +107,14 @@ pub(crate) fn restore_as(item: &TrashItem, to: PathBuf) -> Job<()> {
 
 		std::fs::rename(&from, &to).map_err(|e| format!("{}: {e}", crate::frecency::display(&to)))?;
 
-		// the bin's record goes with it: the bytes are out, and the info file is what lists an
-		// item — purging after a rename would look for bytes that are no longer there
 		std::fs::remove_file(Path::new(&item.id)).map_err(|e| e.to_string())
 	})
 }
 
-/// `D` inside the view: out of the bin for good.
 pub(crate) fn purge(items: Vec<trash::TrashItem>) -> Job<()> {
 	spawn(move || trash::os_limited::purge_all(items).map_err(|e| e.to_string()))
 }
 
-/// Emptying the bin is purging everything in it.
 pub(crate) fn empty() -> Job<()> {
 	spawn(|| {
 		let items = trash::os_limited::list().map_err(|e| e.to_string())?;
@@ -152,8 +122,6 @@ pub(crate) fn empty() -> Job<()> {
 	})
 }
 
-/// `D`: the permanent delete, made with the filesystem's own hand — `remove_dir_all` for a
-/// directory, and the file for a file. Links go as links.
 pub(crate) fn remove(paths: Vec<PathBuf>) -> Job<()> {
 	spawn(move || {
 		for path in &paths {
@@ -178,8 +146,6 @@ mod tests {
 
 	use super::*;
 
-	/// The bin's own item, as the crate hands it over: an id (the info file), a name, where it came
-	/// from and when it went.
 	fn item(name: &str) -> TrashItem {
 		let root = PathBuf::from("/home/x/.local/share/Trash");
 		TrashItem {
@@ -190,8 +156,6 @@ mod tests {
 		}
 	}
 
-	/// An item's bytes are found the way the crate finds them: the info file's stem, under the
-	/// bin's own `files/` (P19 — the preview column reads the real path).
 	#[test]
 	fn an_items_bytes_are_found_by_its_info_file() {
 		assert_eq!(
@@ -207,8 +171,6 @@ mod tests {
 		assert_eq!(in_trash(&odd), None, "an id that is not a path has no bytes to find");
 	}
 
-	/// The name a conflicting restore takes: the stem, the counter in brackets, the extension kept
-	/// — including the dotless and the hidden-name cases.
 	#[test]
 	fn a_numbered_name_keeps_the_stem_and_the_extension_apart() {
 		assert_eq!(numbered(Path::new("/a/b.txt"), 1), PathBuf::from("/a/b (1).txt"));
@@ -218,8 +180,6 @@ mod tests {
 		assert_eq!(numbered(Path::new("/a/.bashrc"), 1), PathBuf::from("/a/.bashrc (1)"));
 	}
 
-	/// A free name beside a taken one: the first counter that nothing stands at — and a path that
-	/// is already free is itself.
 	#[test]
 	fn a_free_name_is_the_first_one_nothing_stands_at() {
 		let dir = std::env::temp_dir().join(format!("crabhop-restore-{}", std::process::id()));
@@ -234,7 +194,6 @@ mod tests {
 		std::fs::write(dir.join("b (2).txt"), b"x").expect("a file");
 		assert_eq!(free_beside(&taken), dir.join("b (3).txt"), "and it walks until one is free");
 
-		// a link whose target is gone still stands there: the restore must not clobber its name
 		let dangling = dir.join("d.txt");
 		std::os::unix::fs::symlink(dir.join("nowhere"), &dangling).expect("a link");
 		assert_eq!(free_beside(&dangling), dir.join("d (1).txt"), "a dangling link is a collision too");
@@ -244,8 +203,6 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// A permanent delete takes the file, a directory with its children, and stops at the first
-	/// thing it cannot take — the error names the path a person typed.
 	#[test]
 	fn a_permanent_delete_takes_files_and_directories() {
 		let dir = std::env::temp_dir().join(format!("crabhop-trash-{}", std::process::id()));

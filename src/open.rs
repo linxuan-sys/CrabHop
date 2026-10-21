@@ -1,5 +1,3 @@
-//! open-with (§4.4): the command a file is handed to, its history, and what `$PATH` could run.
-//! The window only draws the field; the history and the candidates are read and tested here.
 
 use std::path::{Path, PathBuf};
 
@@ -8,13 +6,11 @@ use serde::{Deserialize, Serialize};
 use crate::complete;
 use crate::config::Config;
 
-/// How many commands are worth keeping — an opener list is not a shell's scrollback.
 const HISTORY_CAP: usize = 50;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Entry {
 	pub command: String,
-	/// When it was last used, in unix seconds — the dropdown reads it as a relative time.
 	pub at:      u64,
 }
 
@@ -32,8 +28,6 @@ impl History {
 			.unwrap_or_default()
 	}
 
-	/// A command that is about to run moves to the front of the recency order, and its old seat
-	/// is forgotten rather than repeated; beyond the cap the least recently used one gives way.
 	pub(crate) fn record(&mut self, command: &str) {
 		let command = command.trim();
 		if command.is_empty() {
@@ -60,9 +54,6 @@ impl History {
 	}
 }
 
-/// The candidates for the line: commands while it has no blank in it — the history by recency
-/// first, then what `$PATH` carries — and the paths of the last token once it has one, which is
-/// what an argument usually is. `from` is the offset the chosen candidate replaces.
 pub(crate) fn candidates(line: &str, history: &History, cwd: &Path, cap: usize) -> Vec<String> {
 	let from = complete::token_start(line);
 	if from > 0 {
@@ -83,8 +74,6 @@ pub(crate) fn candidates(line: &str, history: &History, cwd: &Path, cap: usize) 
 	items
 }
 
-/// Whether the first word of a command is something the system could run: a quick yes or no
-/// before anything is handed off, so a typo is answered now rather than by nothing at all.
 pub(crate) fn known(command: &str) -> bool {
 	let name = command.split_whitespace().next().unwrap_or_default();
 	if name.is_empty() {
@@ -97,7 +86,6 @@ pub(crate) fn known(command: &str) -> bool {
 	std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| executable(&dir.join(name))))
 }
 
-/// The executables `$PATH` carries whose names carry on a stem: what the completion offers.
 fn on_path_like(stem: &str, cap: usize) -> Vec<String> {
 	let Some(path) = std::env::var_os("PATH") else { return Vec::new() };
 	let mut items: Vec<String> = Vec::new();
@@ -137,9 +125,6 @@ fn executable(path: &Path) -> bool {
 	}
 }
 
-/// Hand the paths to the command, detached: a thread with a small runtime starts them and lets
-/// them go — the `tokio::process::Command` the spec asks for, and the window waits for nothing.
-/// The path is passed as an argument, never spliced into the shell's own text.
 pub(crate) fn spawn(command: &str, paths: &[PathBuf]) {
 	let (command, paths) = (command.to_owned(), paths.to_vec());
 
@@ -158,9 +143,6 @@ pub(crate) fn spawn(command: &str, paths: &[PathBuf]) {
 	});
 }
 
-/// Hand a file to the system's own default (P30) and watch it to its exit: a launcher
-/// that is not there, or one that says no, is a failure to be said out loud. Blocking — the window
-/// hands it to a thread of its own; this is the shape a test can hold.
 pub(crate) fn system_with(tool: &str, path: &Path) -> bool {
 	std::process::Command::new(tool)
 		.arg(path)
@@ -172,8 +154,6 @@ pub(crate) fn system_with(tool: &str, path: &Path) -> bool {
 		.is_ok_and(|status| status.success())
 }
 
-/// Run a command line, detached and without a shell (P31's own: the menu's chosen application):
-/// every argument lands as it was written, and the working directory is the caller's to say.
 pub(crate) fn spawn_argv(argv: Vec<String>, cwd: Option<PathBuf>) {
 	std::thread::spawn(move || {
 		let Some((tool, args)) = argv.split_first() else { return };
@@ -191,8 +171,6 @@ pub(crate) fn spawn_argv(argv: Vec<String>, cwd: Option<PathBuf>) {
 	});
 }
 
-/// Ask a tool a question and read its answer (P31's terminal chain: `xdg-mime query default …`):
-/// watched like every other child, its words back as one trimmed line.
 pub(crate) fn ask(tool: &str, args: &[&str]) -> Option<String> {
 	let out = std::process::Command::new(tool)
 		.args(args)
@@ -204,8 +182,6 @@ pub(crate) fn ask(tool: &str, args: &[&str]) -> Option<String> {
 	out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned()).filter(|line| !line.is_empty())
 }
 
-/// The same, off the window's thread: the path whose opening failed comes back down the channel
-/// (P30's own item: the failure is said out loud).
 pub(crate) fn system(path: PathBuf, failed: std::sync::mpsc::Sender<PathBuf>) {
 	std::thread::spawn(move || {
 		if !system_with("xdg-open", &path) {
@@ -214,7 +190,6 @@ pub(crate) fn system(path: PathBuf, failed: std::sync::mpsc::Sender<PathBuf>) {
 	});
 }
 
-/// `2 分钟前`, `3 小时前` — the dropdown's own read of a timestamp.
 pub(crate) fn relative(at: u64, now: u64) -> String {
 	let ago = now.saturating_sub(at);
 	match ago {
@@ -229,8 +204,6 @@ pub(crate) fn relative(at: u64, now: u64) -> String {
 mod tests {
 	use super::*;
 
-	/// The launcher's own verdict (P30): a program that is not there, or one that
-	/// says no, is a failure — and only a clean exit is an opening.
 	#[test]
 	fn the_system_open_reports_its_own_failure() {
 		assert!(system_with("/bin/true", Path::new("/tmp/crabhop-n2-never/a.zzz")), "a clean exit is an opening");
@@ -241,9 +214,6 @@ mod tests {
 		);
 	}
 
-
-	/// The history is by recency: a command that runs again moves to the front, and the last one
-	/// gives way at the cap.
 	#[test]
 	fn the_open_history_keeps_the_recency_order() {
 		let mut history = History::default();
@@ -259,8 +229,6 @@ mod tests {
 		assert!(history.entries[0].at >= history.entries[1].at, "the front is the most recent");
 	}
 
-	/// A line with no blank in it brings commands: the history first, then the PATH's own names;
-	/// a line with a blank brings paths.
 	#[test]
 	fn candidates_are_commands_until_a_blank_says_otherwise() {
 		let dir = std::env::temp_dir().join(format!("crabhop-open-{}", std::process::id()));
@@ -286,7 +254,6 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
-	/// The relative time reads the way a dropdown should.
 	#[test]
 	fn the_relative_time_reads_like_a_dropdown() {
 		assert_eq!(relative(100, 130), "刚刚");

@@ -1,7 +1,3 @@
-//! Markdown, laid out by hand (§3.8's own route): pulldown-cmark turns the source into events,
-//! and the events become the window's own display rows — headings at the spec's size ladder, code
-//! blocks in `bg-raised` with syntax highlighting borrowed from §3.3, lists with an accent dot,
-//! links in the busy colour. The tokens are the window's, so "Mocha UI, Mocha code" holds.
 
 use std::collections::HashMap;
 
@@ -12,10 +8,8 @@ use crate::preview::code::Syntax;
 use crate::preview::rows::{Doc, Row, Run, advance};
 use crate::tokens::Tokens;
 
-/// The body size: the ladder above it is §3.2's 22/19/16.
 const BODY: f32 = 16.0;
 
-/// Lays the source out for a content width, in pixels.
 pub(crate) fn layout(source: &str, width: f32, tokens: &Tokens, images: &HashMap<String, [u32; 2]>) -> Doc {
 	let mut build = Build {
 		rows:    Vec::new(),
@@ -34,9 +28,6 @@ pub(crate) fn layout(source: &str, width: f32, tokens: &Tokens, images: &HashMap
 	Doc::new(build.rows)
 }
 
-/// The local pictures a document asks for, in the order it asks (P26's second item): the `src` of
-/// every `![alt](src)`, with the remote and the embedded ones left out — a preview does not fetch
-/// anything. Pure, so the rule can be read and tested.
 pub(crate) fn images(source: &str) -> Vec<String> {
 	let mut wanted = Vec::new();
 	let mut rest = source;
@@ -58,14 +49,12 @@ pub(crate) fn images(source: &str) -> Vec<String> {
 	wanted
 }
 
-/// Whether a picture lives somewhere a preview will not go: the network, or inside the document.
 pub(crate) fn is_remote(src: &str) -> bool {
 	let src = src.trim_start();
 
 	src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") || src.starts_with("//")
 }
 
-/// One inline stretch with the face it is read in.
 #[derive(Clone, Copy, PartialEq)]
 enum Face {
 	Plain,
@@ -74,32 +63,24 @@ enum Face {
 	Code,
 	Link,
 	Strike,
-	/// A list's unordered dot, and an ordered list's number.
 	Bullet,
 	Marker,
 }
 
-/// The layout in progress: the rows made so far, and the state the events run through.
 struct Build<'a> {
 	rows:    Vec<Row>,
-	/// The pictures the document's own file answered for (P26's second item): `src` → its pixels.
 	images:  &'a HashMap<String, [u32; 2]>,
-	/// The picture the reader is inside right now, with the alt text gathered so far.
 	image:   Option<(String, String)>,
 	tokens:  &'a Tokens,
 	width:   f32,
 	faces:   Vec<Face>,
 	quote:   usize,
 	lists:   Vec<Option<u64>>,
-	/// The space the next block wants above it, in pixels.
 	pending: f32,
-	/// Inside a code block: its language, and the text so far.
 	code:    Option<(String, String)>,
-	/// Inside a table: the rows of cells so far.
 	table:   Option<Vec<Vec<String>>>,
 }
 
-/// A stretch of text with its face: the wrapper's unit, before it becomes a Row's runs.
 #[derive(Clone)]
 struct Span {
 	text: String,
@@ -117,8 +98,6 @@ impl Build<'_> {
 				Event::End(tag) => self.end(tag, &mut words),
 				Event::Text(text) => match &mut self.code {
 					Some((_, buf)) => buf.push_str(&text),
-					// inside an image the text is its alt: it is kept beside the src rather than
-					// becoming a paragraph of its own (P26's second item)
 					None if self.image.is_some() => {
 						let (_, alt) = self.image.as_mut().expect("checked just now");
 						alt.push_str(&text);
@@ -142,17 +121,12 @@ impl Build<'_> {
 				Event::TaskListMarker(done) => {
 					words.push(Span { text: if done { "[x] " } else { "[ ] " }.to_owned(), face: Face::Plain });
 				}
-				// html in a preview is not interpreted: it neither shows nor breaks the layout
 				Event::Html(_) | Event::InlineHtml(_) => {}
 				_ => {}
 			}
 		}
 	}
 
-	/// An image's own row (P26's second item): a band as tall as the picture stands when contained
-	/// at half the column, with the picture's key in it for the pane to paint. One whose file the
-	/// preview could not read — or one kept on the network — is a line of words instead, and says
-	/// which of the two it is.
 	fn image_row(&mut self, words: &mut Vec<Span>) {
 		let Some((src, alt)) = self.image.take() else { return };
 		words.clear();
@@ -168,8 +142,6 @@ impl Build<'_> {
 			..Default::default()
 		};
 
-		// half the column, the picture's own shape, and a ceiling so one tall picture cannot take
-		// the whole pane
 		const HALF: f32 = 0.5;
 		const CEILING: f32 = 480.0;
 
@@ -186,7 +158,6 @@ impl Build<'_> {
 		self.rows.push(row);
 	}
 
-	/// The face the next plain text is read in: the innermost styling that is open.
 	fn face(&self) -> Face { self.faces.last().copied().unwrap_or(Face::Plain) }
 
 	fn start(&mut self, tag: Tag, words: &mut Vec<Span>) {
@@ -251,8 +222,6 @@ impl Build<'_> {
 			TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough | TagEnd::Link => {
 				self.faces.pop();
 			}
-			// a picture ends its own line: the alt it gathered becomes the band's caption, and the
-			// band is the picture's to stand in (P26's second item)
 			TagEnd::Image => {
 				self.faces.pop();
 				self.image_row(words);
@@ -282,7 +251,6 @@ impl Build<'_> {
 		}
 	}
 
-	/// A heading: the ladder's size and margins, H1's own rule, and never wrapped past the column.
 	fn heading(&mut self, level: HeadingLevel, words: &mut Vec<Span>) {
 		let spans = std::mem::take(words);
 		let (size, before, after, rule) = match level {
@@ -304,7 +272,6 @@ impl Build<'_> {
 		self.pending = after;
 	}
 
-	/// A finished code block: one row a line, in the raised band, with the fence's own syntax.
 	fn code_block(&mut self) {
 		let Some((lang, text)) = self.code.take() else { return };
 		let mut lines: Vec<&str> = text.split('\n').collect();
@@ -337,7 +304,6 @@ impl Build<'_> {
 		self.pending = 12.0;
 	}
 
-	/// A paragraph's (or item's, or heading's) words become its rows, wrapped to the column.
 	fn flush(&mut self, words: &mut Vec<Span>) {
 		if words.is_empty() {
 			return;
@@ -360,11 +326,8 @@ impl Build<'_> {
 		self.pending = if quote { 8.0 } else { 12.0 };
 	}
 
-	/// A finished table becomes rows with cells, a header band and the spec's full grid.
 	fn table(&mut self) {
 		let Some(cells) = self.table.take() else { return };
-		// the parser announces the head with a row of its own: the rows that carry no cell are
-		// not rows a table should draw
 		let cells: Vec<Vec<String>> = cells.into_iter().filter(|row| !row.is_empty()).collect();
 		if cells.is_empty() {
 			return;
@@ -375,7 +338,6 @@ impl Build<'_> {
 			return;
 		}
 
-		// each column's width follows its widest cell, between the spec's 60 and 320 pixels
 		let mut widths = vec![60.0f32; cols];
 		for row in &cells {
 			for (i, cell) in row.iter().enumerate() {
@@ -384,7 +346,6 @@ impl Build<'_> {
 				widths[i] = widths[i].max(px.min(320.0));
 			}
 		}
-		// and the pane's own width caps the whole of it
 		let total: f32 = widths.iter().sum();
 		if total > self.width {
 			let scale = self.width / total;
@@ -413,7 +374,6 @@ impl Build<'_> {
 		self.pending = 12.0;
 	}
 
-	/// A row from one wrapped line of spans.
 	fn row_of(
 		&self,
 		line: &[Span],
@@ -447,9 +407,6 @@ impl Build<'_> {
 		row
 	}
 
-	/// Wrap a block's spans into lines: a CJK glyph may break after any of them, Latin only at the
-	/// spaces between its words, a word longer than a line is cut where it stands, and a hard break
-	/// ends the line where it stands. The same rule the legacy window's wrap used, over spans.
 	fn wrap(&self, spans: &[Span], size: f32, indent: f32) -> Vec<Vec<Span>> {
 		let width = (self.width - indent).max(64.0);
 		let chars: Vec<(char, Face)> = spans.iter().flat_map(|span| span.text.chars().map(|c| (c, span.face))).collect();
@@ -497,16 +454,12 @@ impl Build<'_> {
 		out
 	}
 
-	/// The space above a block, consumed once: the previous block's margin and this one's meet
-	/// the way adjacent CSS margins do — the larger wins, and nothing is counted twice (§3.2's
-	/// 20/12, 16/8, 12/6 are read that way).
 	fn take_pending(&mut self, fallback: f32) -> f32 {
 		let space = std::mem::take(&mut self.pending);
 		space.max(fallback)
 	}
 }
 
-/// One wrapped line of chars back into runs: consecutive chars of one face merge.
 fn line_of(line: &[(char, Face)]) -> Vec<Span> {
 	let mut out: Vec<Span> = Vec::new();
 
@@ -526,8 +479,6 @@ mod tests {
 
 	fn tokens() -> Tokens { Tokens::MOCHA }
 
-	/// The heading ladder is the spec's: H1 is the biggest, it carries the only rule, and the
-	/// margins of the ladder are the 20/12, 16/8, 12/6 the table lays down.
 	#[test]
 	fn headings_follow_the_specs_ladder() {
 		let doc = layout("# 一\n\n## 二\n\n### 三\n\ntext", 400.0, &tokens(), &HashMap::new());
@@ -540,8 +491,6 @@ mod tests {
 		assert_eq!(doc.rows[2].before, 12.0);
 	}
 
-	/// A list keeps its bullet in the accent colour, indents 24px a level, and an ordered one
-	/// numbers its items.
 	#[test]
 	fn lists_bullet_and_number() {
 		let doc = layout("- one\n- two\n\n1. first\n2. second", 400.0, &tokens(), &HashMap::new());
@@ -557,7 +506,6 @@ mod tests {
 		assert_eq!(numbered[1].text, "2. second");
 	}
 
-	/// A fenced block wears the raised band and the code size, and its words get syntax colours.
 	#[test]
 	fn a_fenced_block_is_a_band_of_code() {
 		let doc = layout("```rust\nfn main() {}\n```", 400.0, &tokens(), &HashMap::new());
@@ -570,8 +518,6 @@ mod tests {
 		assert_eq!(row.runs[0].colour, Color32::from_rgb(0xcb, 0xa6, 0xf7), "the keyword is mauve");
 	}
 
-	/// Links are busy, code in a paragraph is a chip, and a table is cells with a header band — the
-	/// spec's own readings of each.
 	#[test]
 	fn links_code_chips_and_tables() {
 		let doc = layout("see [docs](https://x) and `code`\n\n| a | b |\n|---|---|\n| 1 | 2 |", 400.0, &tokens(), &HashMap::new());
@@ -589,7 +535,6 @@ mod tests {
 		assert_eq!(table[0].bg, Some(tokens().raised), "the header wears the band");
 		assert!(table[0].rule.is_some() && table[0].rule_top, "a full grid, borders on every row");
 	}
-
 
 	#[test]
 	fn paragraphs_wrap_within_the_column() {
@@ -609,7 +554,6 @@ mod tests {
 		assert!(joined.contains("这是第二段"), "no character is lost to the wrap: {joined:?}");
 	}
 
-	/// A quote greys its text and hangs the spec's bar; a rule is a line with air around it.
 	#[test]
 	fn quotes_and_rules() {
 		let doc = layout("> quoted words\n\n---\n\nplain", 400.0, &tokens(), &HashMap::new());
@@ -621,11 +565,8 @@ mod tests {
 		let rule = doc.rows.iter().find(|row| row.height == 1.0).expect("the rule");
 		assert_eq!(rule.rule, Some(tokens().border));
 
-		// and a row's height is what the layout asked: a rule is one line, not a text line
 		assert!(doc.total > 0.0);
 	}
-	/// The pictures a document asks for (P26's second item): extracted in order, deduplicated, and
-	/// with the remote and the embedded ones left out — a preview fetches nothing.
 	#[test]
 	fn the_pictures_a_document_asks_for_are_the_local_ones() {
 		let source = "# 标题\n\n![一个图](pics/a.png)\n\n![remote](https://x.example/b.png)\n\n![数据](data:image/png;base64,AAAA)\n\n![again](pics/a.png)\n";
@@ -639,9 +580,6 @@ mod tests {
 		assert!(!is_remote("/tmp/a.png"));
 	}
 
-	/// An image's own row (P26's second item): when the picture is known its band stands as tall as
-	/// the picture drawn at half the column, and the row carries what the pane looks up; a remote
-	/// one and one the preview could not read are lines of words instead, and say which they are.
 	#[test]
 	fn an_image_gets_a_band_and_a_missing_one_gets_words() {
 		let tokens = Tokens::MOCHA;
@@ -654,7 +592,6 @@ mod tests {
 		let band = &doc.rows[0];
 		assert!(band.image.is_some(), "the known picture's row is a band");
 		assert_eq!(band.image.as_deref(), Some("pics/a.png"), "and it carries what the pane looks up");
-		// half of 400 is 200 wide, and 200 × 100/200 = 100 tall, plus the band's own air
 		assert!((band.height - 112.0).abs() < 0.01, "the band is the picture's shape: {}", band.height);
 		assert!(band.text.contains("宽图"), "with the alt kept beside it: {}", band.text);
 
