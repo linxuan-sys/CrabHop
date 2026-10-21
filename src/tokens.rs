@@ -20,13 +20,12 @@ pub(crate) const ROW_HEIGHT: f32 = 32.0;
 #[allow(dead_code)]
 pub(crate) const ROW_HEIGHT_TIGHT: f32 = 26.0;
 
-/// The sheet preview's own grid metrics (P41): a column's width and a row's height come from
-/// the file itself, clamped into these — the grid never collapses a column to a sliver, and
-/// never lets one run the pane off its own edge.
+/// The sheet preview's own head metrics (P42): a column's width comes from the file itself,
+/// clamped into these — the labels' blocks never collapse to a sliver, and never let one run
+/// the pane off its own edge. (P41's row heights retired with its body: the head draws one
+/// band, and its own height is `sheet::HEAD_HEIGHT`.)
 pub(crate) const SHEET_COL_MIN_W: f32 = 48.0;
 pub(crate) const SHEET_COL_MAX_W: f32 = 320.0;
-pub(crate) const SHEET_ROW_MIN_H: f32 = 18.0;
-pub(crate) const SHEET_ROW_MAX_H: f32 = 72.0;
 
 /// The icon box: a 20px square with a 16px glyph centred in it.
 pub(crate) const ICON_BOX: f32 = 20.0;
