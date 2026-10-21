@@ -1,4 +1,4 @@
-crabhop — third-party notices
+CrabHop — third-party notices
 ============================
 
 This project carries material written by others. Each item below is listed with the licence it
@@ -8,7 +8,7 @@ came under and the copyright line that licence asks to be kept.
 1. yazi — the preset icon table
 --------------------------------------------------------------------------------------------------
 
-File it lives in:  crabhop/src/icons/table.rs
+File it lives in:  src/icons/table.rs
 Source:            https://github.com/sxyazi/yazi
                    (.yazi preset, `theme-dark.toml`, its `[icon]` section: `dirs`, `files`,
                    `exts` — the glyphs and the `fg` hex constants are yazi's own, adapted into
