@@ -6,8 +6,11 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-/// How long a toast stays before it starts to go (the spec's 3s), and how long the going takes.
-pub(crate) const STAY: Duration = Duration::from_secs(3);
+/// How long a toast stays before it starts to go (P42③'s own cut — the spec's 3s was too short
+/// to read, let alone to reach for the undo), and the longer stay of a note that offers one:
+/// 「要撤回还没等到点就消失了」. The going itself takes a fifth of a second all the same.
+pub(crate) const STAY: Duration = Duration::from_secs(8);
+pub(crate) const STAY_UNDO: Duration = Duration::from_secs(10);
 pub(crate) const FADE: Duration = Duration::from_millis(200);
 const SLIDE: Duration = Duration::from_millis(150);
 /// No more than three at once; a fourth pushes the oldest out (§5.2).
@@ -113,9 +116,9 @@ impl Toasts {
 	}
 
 	/// Drop the ones that have finished going, and say whether any are still on screen — the
-	/// repaint the fade needs.
+	/// repaint the fade needs. Each note keeps its own stay (P42③): an undo's is the longer one.
 	pub(crate) fn tick(&mut self, now: Instant) -> bool {
-		self.items.retain(|toast| now.duration_since(toast.born) < STAY + FADE);
+		self.items.retain(|toast| now.duration_since(toast.born) < toast.stay() + FADE);
 		!self.items.is_empty()
 	}
 
@@ -156,6 +159,12 @@ impl Toast {
 	pub(crate) fn age(&self, now: Instant) -> Duration {
 		now.duration_since(self.born)
 	}
+
+	/// The note's own stay (P42③): the undo's is the longer one — a hand needs the time to mean
+	/// it, and a note that offers nothing waits the shorter while.
+	pub(crate) fn stay(&self) -> Duration {
+		if self.undo.is_some() { STAY_UNDO } else { STAY }
+	}
 }
 
 /// How far right of its seat a toast still floats: the 24px slide-in over 150ms, eased out.
@@ -168,13 +177,13 @@ pub(crate) fn slide(age: Duration) -> f32 {
 	24.0 * (1.0 - t) * (1.0 - t)
 }
 
-/// How solid a toast is: whole until its stay is up, then gone over the 200ms fade.
-pub(crate) fn alpha(age: Duration) -> f32 {
-	if age <= STAY {
+/// How solid a toast is: whole until its own stay is up, then gone over the 200ms fade.
+pub(crate) fn alpha(age: Duration, stay: Duration) -> f32 {
+	if age <= stay {
 		return 1.0;
 	}
 
-	(1.0 - (age - STAY).as_secs_f32() / FADE.as_secs_f32()).clamp(0.0, 1.0)
+	(1.0 - (age - stay).as_secs_f32() / FADE.as_secs_f32()).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -188,9 +197,24 @@ mod tests {
 		assert!(slide(Duration::from_millis(150)) == 0.0, "and is seated after 150ms");
 		assert!(slide(Duration::from_millis(75)) < 24.0 && slide(Duration::from_millis(75)) > 0.0);
 
-		assert_eq!(alpha(Duration::from_secs(3)), 1.0, "whole through its stay");
-		assert!(alpha(STAY + FADE / 2) < 0.6, "halfway gone at half the fade");
-		assert_eq!(alpha(STAY + FADE), 0.0);
+		assert_eq!(alpha(STAY, STAY), 1.0, "whole through its stay");
+		assert!(alpha(STAY + FADE / 2, STAY) < 0.6, "halfway gone at half the fade");
+		assert_eq!(alpha(STAY + FADE, STAY), 0.0);
+
+		// and its own stay is the one that rules (P42③): eight seconds plain, ten with an undo
+		assert_eq!(STAY, Duration::from_secs(8), "a note stands eight seconds");
+		assert_eq!(STAY_UNDO, Duration::from_secs(10), "and an undo's ten — the user's own cut");
+		assert_eq!(alpha(Duration::from_secs(9), STAY), 0.0, "a plain note is gone by the ninth");
+		assert_eq!(alpha(Duration::from_secs(9), STAY_UNDO), 1.0, "an undo's still whole there");
+
+		// the queue's own dropping follows the same rule
+		let mut toasts = Toasts::default();
+		toasts.push("plain", Kind::Ok);
+		toasts.push_with_undo("undo", Kind::Ok, Some(Undo::BookmarkSave("k".to_owned())));
+		let born = Instant::now();
+		assert!(toasts.tick(born + Duration::from_secs(9)), "at the ninth the undo's still there");
+		assert_eq!(toasts.len(), 1, "and the plain one is not");
+		assert!(!toasts.tick(born + STAY_UNDO + FADE), "by the tenth and a fade, none");
 	}
 
 	/// A note can be taken away by hand (P30): one at a seat, or all of them at once — what a

@@ -6480,7 +6480,7 @@ impl App {
 
 			let slot = (len - 1 - i) as f32;
 			let age = toast.age(now);
-			let alpha = toast::alpha(age);
+			let alpha = toast::alpha(age, toast.stay());
 			let rect = Rect::from_min_size(
 				pos2(area.max.x - 12.0 - width + toast::slide(age), area.max.y - STATUS_HEIGHT - 12.0 - height - slot * (height + 8.0)),
 				vec2(width, height),
