@@ -199,10 +199,12 @@ pub(crate) fn moment(at: Option<SystemTime>) -> String {
 	format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
 }
 
-/// A timestamp as a civil date and time: days since 1970-01-01 through Howard Hinnant's
-/// civil-from-days, which is twelve lines of arithmetic anybody can check.
+/// A timestamp as the person's own wall clock, not UTC: the list is read next to other programs'
+/// clocks, and an eight-hour shift reads as a wrong file (P46).
 fn civil(at: Option<SystemTime>) -> Option<(i64, i64, i64, u64, u64, u64)> {
 	let secs = at.and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs())?;
+	let offset = local_offset(secs);
+	let secs = (secs as i64 + offset).max(0) as u64;
 
 	let days = (secs / 86_400) as i64;
 	let (hour, minute, second) = ((secs % 86_400) / 3_600, (secs % 3_600) / 60, secs % 60);
@@ -218,6 +220,22 @@ fn civil(at: Option<SystemTime>) -> Option<(i64, i64, i64, u64, u64, u64)> {
 	let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
 
 	Some((year, month, day, hour, minute, second))
+}
+
+/// How far the person's wall clock stands from UTC at that instant, in seconds: `localtime_r`
+/// knows the zone, the DST rule and `TZ`, and asks nobody to install anything — it is the C
+/// library the process already links. A clock that cannot answer keeps UTC rather than guessing.
+fn local_offset(secs: u64) -> i64 {
+	let Ok(secs) = libc::time_t::try_from(secs) else { return 0 };
+	let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+	// SAFETY: `localtime_r` writes into the `tm` we own and returns a pointer into it (or null);
+	// nothing here is shared across threads.
+	let filled = unsafe { libc::localtime_r(&secs, &mut tm) };
+	if filled.is_null() {
+		return 0;
+	}
+
+	tm.tm_gmtoff
 }
 
 #[cfg(test)]
@@ -368,15 +386,31 @@ mod tests {
 	}
 
 	/// The full form the spot card reads (P23): the year is there, the seconds are there, and a
-	/// time the file does not carry is a dash rather than a lie.
+	/// time the file does not carry is a dash rather than a lie. The clock is the person's own,
+	/// so the expectation is built the same way the window builds it — through the C library's
+	/// `localtime_r` — and the two must agree whatever zone the machine stands in (P46).
 	#[test]
 	fn a_moment_is_said_whole() {
-		// the clock the app reads is UTC, the same one `when` has always shown (TZ handling is a
-		// recorded gap): 1_700_000_000s is 2023-11-14 22:13:20Z
 		let at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-		assert_eq!(moment(Some(at)), "2023-11-14 22:13:20");
+		let secs: libc::time_t = 1_700_000_000;
+		let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+		let filled = unsafe { libc::localtime_r(&secs, &mut tm) };
+		assert!(!filled.is_null(), "the C library knows the zone");
+
+		let expected = format!(
+			"{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+			tm.tm_year + 1900,
+			tm.tm_mon + 1,
+			tm.tm_mday,
+			tm.tm_hour,
+			tm.tm_min,
+			tm.tm_sec
+		);
+		assert_eq!(moment(Some(at)), expected, "the card says the person's wall clock");
 		assert_eq!(moment(None), "—");
-		assert_eq!(when(Some(at)), "11-14 22:13", "the short form the list uses is unchanged");
+
+		let short = format!("{:02}-{:02} {:02}:{:02}", tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min);
+		assert_eq!(when(Some(at)), short, "the short form the list uses agrees with it");
 	}
 
 	#[test]
