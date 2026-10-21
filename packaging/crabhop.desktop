@@ -7,7 +7,7 @@ Exec=crabhop %F
 Icon=crabhop
 Terminal=false
 # A main category first (desktop-file-validate asks for one), the file-manager role beside it.
-Categories=Utility;System;FileManager;
+Categories=Utility;FileManager;
 MimeType=inode/directory;
 Keywords=crabhop;file;manager;files;
 StartupWMClass=crabhop

@@ -50,3 +50,14 @@ command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -qtf "
 printf 'CrabHop installed:\n  %s/crabhop\n  %s/applications/crabhop.desktop\n' "$bindir" "$data"
 case ":${PATH}:" in *":$bindir:"*) ;; *) echo "  (note: $bindir is not on PATH — the menu entry still works)" ;; esac
 echo "  start it from your application menu, or run: $bindir/crabhop"
+
+# The tarball has done its job; take it away with its unpacked directory's parent in mind, so a
+# person who downloaded, unpacked and installed is left with nothing to clean up (P45). Only a
+# crabhop tarball, only beside this directory, and the trash when the desktop offers one.
+for archive in "$here"/../crabhop-*-linux-*.tar.xz; do
+	[ -f "$archive" ] || continue
+	if command -v gio >/dev/null 2>&1; then
+		gio trash "$archive" 2>/dev/null && { echo "  moved the tarball to the trash: $(basename "$archive")"; continue; }
+	fi
+	rm -f "$archive" && echo "  removed the tarball: $(basename "$archive")"
+done
