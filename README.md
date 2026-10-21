@@ -1,5 +1,7 @@
 # CrabHop
 
+English | [中文](README.zh-CN.md)
+
 A native, keyboard-first file manager: the window owns its state and draws its own list — three
 columns, a preview stack (pictures, PDF, office documents, archives, media), the desktop's own
 open-with list, and a headless harness that replays keys and paints frames without a window.
