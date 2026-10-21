@@ -35,6 +35,10 @@ read it). A replay or a screenshot runs headless, no window:
 - **From a release tarball**: unpack `crabhop-<version>-x86_64.tar.gz` and put `crabhop` on your `PATH`.
 - **From source**: `cargo build --release` — fetch PDFium first, as **Build** above says.
 
+Or, without root: `scripts/install.sh` puts the binary, the menu entry and the icons under
+`~/.local` (`scripts/uninstall.sh` takes them back). The AUR package, `packaging/arch/PKGBUILD`,
+holds the same files for a system-wide install.
+
 ## Community-welcome items
 
 The configuration surface is deliberately two-layered — the factory's own files here, overridden
