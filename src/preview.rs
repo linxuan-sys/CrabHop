@@ -128,6 +128,8 @@ enum Payload {
 		/// pictures in it.
 		images:    Vec<(String, String, [u32; 2], Vec<u8>)>,
 	},
+	/// A spreadsheet's used range as a table (P41): the pane paints its grid, not its text.
+	Table(sheet::Table),
 	/// A named failure: too big to decode, an encrypted PDF — the column says so.
 	Note(String),
 	/// Nothing could be made of it: the placeholder stands, with a reason under the name when the
@@ -211,6 +213,8 @@ enum Show {
 	Dir { entries: Vec<Entry>, doc: Option<Doc>, truncated: bool },
 	/// A hovered archive's entry tree, built the same way.
 	Archive { items: Vec<archive::Item>, doc: Option<Doc>, total: Option<usize>, truncated: bool },
+	/// A spreadsheet's own table (P41): the used range with its grid's dimensions.
+	Table { table: sheet::Table },
 }
 
 /// A textual answer, kept so a width change can lay it out again.
@@ -771,6 +775,12 @@ impl PreviewPane {
 				self.laid = None;
 				self.laid_of = None;
 			}
+			Payload::Table(table) => {
+				self.pending = None;
+				self.raw = None;
+				self.show = Show::Table { table };
+				self.touched = Some(Instant::now());
+			}
 			Payload::Note(text) => {
 				self.pending = None;
 				self.raw = None;
@@ -1029,6 +1039,8 @@ impl PreviewPane {
 			// the wheel measures — with the old order a listing loaded before the file kept
 			// `content` at the listing's own height while the file's rows were being drawn
 			(_, Some(_)) => self.laid.as_ref().map_or(PAD, |doc| doc.total + PAD),
+			// the sheet's grid measures itself (P41): its rows' own heights
+			(Show::Table { table }, None) => table.height() + PAD,
 			(Show::Dir { doc: Some(doc), .. } | Show::Archive { doc: Some(doc), .. }, _) => doc.total + PAD,
 			// the picture's own height at the column's width (P27's first item): a tall picture is
 			// a page to walk, so this is what the wheel and the scrollbar measure against
@@ -1085,6 +1097,7 @@ impl PreviewPane {
 				self.draw_pdf(painter, content, &key, size, page, total, rect, tokens);
 			}
 			(Show::Dir { .. } | Show::Archive { .. }, None) => self.draw_listing(painter, content, tokens),
+			(Show::Table { .. }, None) => self.draw_sheet(painter, content, tokens),
 			(Show::Media { facts }, None) => {
 				let facts = facts.clone();
 				self.draw_media(painter, content, &facts, tokens);
@@ -1260,6 +1273,113 @@ impl PreviewPane {
 			&format!("{} / {total}", page + 1),
 			tokens,
 		);
+	}
+
+	/// The sheet's own grid (P41): the used range painted as a table — the file's column widths and
+	/// row heights, each cell's text clipped where it stands, an empty cell marching through all
+	/// the same, the first row bolded under a line of its own, and every merged span drawn from
+	/// its anchor with no line inside it.
+	fn draw_sheet(&mut self, painter: &Painter, content: Rect, tokens: &Tokens) {
+		let max = match &self.show {
+			Show::Table { table } => (table.height() + PAD - content.height()).max(0.0),
+			_ => return,
+		};
+		self.offset = self.offset.clamp(0.0, max);
+		let Show::Table { table } = &self.show else { return };
+
+		let clip = painter.with_clip_rect(content);
+		let painter = &clip;
+		let font = FontId::new(13.0, FontFamily::Monospace);
+		let bold = FontId::new(13.0, FontFamily::Name("maple-bold".into()));
+		let line = tokens.border;
+		let anchor = tokens.border_strong;
+
+		let cols = table.cols.len();
+		let rows = table.rows.len();
+		if cols == 0 || rows == 0 {
+			return;
+		}
+
+		// every column's left edge and the range's right; every row's top and its bottom
+		let mut xs = Vec::with_capacity(cols + 1);
+		let mut x = content.min.x;
+		for w in &table.cols {
+			xs.push(x);
+			x += w;
+		}
+		xs.push(x);
+
+		let mut ys = Vec::with_capacity(rows + 1);
+		let mut y = content.min.y - self.offset;
+		for h in &table.rows {
+			ys.push(y);
+			y += h;
+		}
+		ys.push(y);
+
+		// the first row's own band: the header's shading, under the grid's own lines
+		let band = Rect::from_min_max(pos2(content.min.x, ys[0]), pos2(content.max.x, ys[1]));
+		if band.max.y > content.min.y && band.min.y < content.max.y {
+			painter.rect_filled(band, 0.0, tokens.raised);
+		}
+
+		// the grid itself: every boundary the window shows, and none inside a merged span — a
+		// span's border closes across it, its body carries no line of its own (P41's ④)
+		for r in 0..rows {
+			if ys[r + 1] < content.min.y || ys[r] > content.max.y {
+				continue;
+			}
+			for (b, x) in xs.iter().enumerate() {
+				let interior = table.merges.iter().any(|&(r1, c1, r2, c2)| c1 < b && b <= c2 && r1 <= r && r <= r2);
+				if interior {
+					continue;
+				}
+				painter.rect_filled(Rect::from_min_max(pos2(*x, ys[r]), pos2(*x + 1.0, ys[r + 1])), 0.0, line);
+			}
+		}
+		for (b, y) in ys.iter().enumerate() {
+			if *y < content.min.y - 1.0 || *y > content.max.y + 1.0 {
+				continue;
+			}
+			for c in 0..cols {
+				let interior = table.merges.iter().any(|&(r1, c1, r2, c2)| r1 < b && b <= r2 && c1 <= c && c <= c2);
+				if interior {
+					continue;
+				}
+				painter.rect_filled(Rect::from_min_max(pos2(xs[c], *y), pos2(xs[c + 1], *y + 1.0)), 0.0, line);
+			}
+		}
+
+		// the cells: the anchors hold their text (a span's own across its width), the bodies say
+		// nothing, and an empty cell is skipped while the grid marches on
+		let advance = 13.0 * 0.62;
+		for r in 0..rows {
+			if ys[r + 1] < content.min.y || ys[r] > content.max.y {
+				continue;
+			}
+			for c in 0..cols {
+				let Some(text) = table.text(r, c) else { continue };
+				let end = match table.span(r, c) {
+					Some((_, _, _, c2)) => xs[(c2 + 1).min(cols)],
+					None => xs[c + 1],
+				};
+				let budget = (((end - xs[c] - 8.0) / advance).floor().max(1.0)) as u32;
+				painter.text(
+					pos2(xs[c] + 4.0, (ys[r] + ys[r + 1]) * 0.5),
+					Align2::LEFT_CENTER,
+					crate::list::clipped(text, budget),
+					if r == 0 { bold.clone() } else { font.clone() },
+					tokens.text,
+				);
+			}
+		}
+
+		// the header's own line under the first row: the anchor the eye reads, drawn last so the
+		// grid cannot cover it
+		let at = ys[1].min(content.max.y);
+		if at > content.min.y {
+			painter.rect_filled(Rect::from_min_max(pos2(content.min.x, at - 1.0), pos2(content.max.x, at)), 0.0, anchor);
+		}
 	}
 
 	/// A listing — a hovered directory's next level, or an archive's entry tree: the rows are
@@ -2089,16 +2209,19 @@ fn run(ctx: &Context, job: Look, tx: Sender<Answer>) {
 				return;
 			};
 
-			let text = match kind {
-				Kind::Docx => docx::Docx::extract(&bytes),
-				_ => sheet::Sheet::extract(&bytes),
-			};
-			match text {
-				Some(text) => {
-					text_cache_store(&name, mtime, &text);
-					send(Payload::Text { text, truncated: false, images: Vec::new() });
-				}
-				None => send(Payload::Nothing),
+			match kind {
+				Kind::Docx => match docx::Docx::extract(&bytes) {
+					Some(text) => {
+						text_cache_store(&name, mtime, &text);
+						send(Payload::Text { text, truncated: false, images: Vec::new() });
+					}
+					None => send(Payload::Nothing),
+				},
+				// a sheet is a table, not a text (P41): the pane draws the grid and its cells
+				_ => match sheet::Sheet::read(&bytes) {
+					Some(table) => send(Payload::Table(table)),
+					None => send(Payload::Nothing),
+				},
 			}
 		}
 		Kind::Video => {

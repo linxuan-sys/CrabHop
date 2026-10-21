@@ -2708,6 +2708,102 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&cold);
 	}
 
+	/// P41: the sheet pane paints a table — the grid's lines run both ways in the border token's
+	/// own colour, the first row carries the header's shading and its anchor line, and a merged
+	/// span's interior keeps no line of its own while its anchor holds the text. The fixture is
+	/// built here, its widths known, so the column boundaries can be found by the same rule the
+	/// pane uses.
+	#[test]
+	fn the_sheet_preview_draws_its_grid_lines_and_header() {
+		use std::io::Write as _;
+
+		let root = std::env::temp_dir().join(format!("crabhop-p41-sheet-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&root);
+		std::fs::create_dir_all(&root).expect("a sandbox");
+
+		// one sheet: A wide, B default, C narrow; row 1 tall; A1:B1 merged; B3 empty
+		let mut zip = zip::ZipWriter::new(std::fs::File::create(root.join("grid.xlsx")).expect("the fixture"));
+		let options: zip::write::FileOptions<'_, ()> =
+			zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+		zip.start_file("[Content_Types].xml", options).unwrap();
+		zip.write_all(r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#.as_bytes()).unwrap();
+		zip.start_file("xl/workbook.xml", options).unwrap();
+		zip.write_all(r#"<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="格" sheetId="1" r:id="rId1"/></sheets></workbook>"#.as_bytes()).unwrap();
+		zip.start_file("_rels/.rels", options).unwrap();
+		zip.write_all(r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#.as_bytes()).unwrap();
+		zip.start_file("xl/_rels/workbook.xml.rels", options).unwrap();
+		zip.write_all(r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#.as_bytes()).unwrap();
+		let mut rows = String::from(r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="18"/><col min="3" max="3" width="4"/></cols><sheetData><row r="1" ht="30" customHeight="1"><c r="A1" t="inlineStr"><is><t>名称</t></is></c><c r="B1"><v>1</v></c><c r="C1" t="inlineStr"><is><t>注</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>鸭子</t></is></c><c r="B2"><v>42</v></c><c r="C2"><v>7.5</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>duck</t></is></c><c r="C3" t="inlineStr"><is><t>x</t></is></c></row>"#);
+		for at in 4..=40 {
+			rows.push_str(&format!("<row r=\"{at}\"><c r=\"A{at}\"><v>{at}</v></c><c r=\"B{at}\"><v>{}</v></c></row>", at * 2));
+		}
+		rows.push_str(r#"</sheetData><mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells></worksheet>"#);
+		zip.start_file("xl/worksheets/sheet1.xml", options).unwrap();
+		zip.write_all(rows.as_bytes()).unwrap();
+		zip.finish().unwrap();
+
+		let mut s = session(vec![ format!("reveal {}", root.join("grid.xlsx").display()) ]);
+		for _ in 0..600 {
+			if s.app.cwd_for_tests() == root {
+				break;
+			}
+			std::thread::sleep(Duration::from_millis(4));
+			s.shoot();
+		}
+		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
+		for _ in 0..240 {
+			if s.app.preview_extent_for_tests().is_some() {
+				break;
+			}
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+		}
+		assert!(s.app.preview_extent_for_tests().is_some(), "the table is up and taller than the column");
+
+		let image = s.shoot();
+		let (body, shares) = s.app.layout();
+		let preview = crate::preview::content_of(chrome::columns(body, shares).preview.expect("a preview column"));
+		let tokens = crate::tokens::Tokens::MOCHA;
+		let at = |x: usize, y: usize| image.pixels[y * image.size[0] + x];
+
+		// the widths the pane draws, recomputed by its own rule: 18 chars wide, the sheet default,
+		// and 4 chars floored by the token
+		let col = |w: f32| w.clamp(crate::tokens::SHEET_COL_MIN_W, crate::tokens::SHEET_COL_MAX_W);
+		let (w0, w1) = (col(18.0 * 7.0 + 5.0), col(8.43 * 7.0 + 5.0));
+		let xs = [ preview.min.x, preview.min.x + w0, preview.min.x + w0 + w1 ];
+		let mid = |x0: f32, x1: f32| ((x0 + x1) * 0.5) as usize;
+
+		// every vertical line crosses a scanline drawn through the body rows, and every horizontal
+		// line crosses one drawn down a column: the border token, both ways
+		let band_y = mid(preview.min.y + crate::tokens::SHEET_ROW_MIN_H * 2.0, preview.min.y + crate::tokens::SHEET_ROW_MIN_H * 3.0);
+		let verticals = (preview.min.x as usize..preview.max.x as usize).filter(|x| at(*x, band_y) == tokens.border).count();
+		assert!(verticals > 0, "the grid's verticals are drawn: {verticals} border pixels in the row's own scanline");
+
+		let band_x = mid(xs[0], xs[1]);
+		let horizontals = (preview.min.y as usize..preview.max.y as usize).filter(|y| at(band_x, *y) == tokens.border).count();
+		assert!(horizontals > 0, "and its horizontals: {horizontals} border pixels down the column");
+
+		// the first row's own band: the header's shading, and its anchor line under it
+		let head_y = mid(preview.min.y, preview.min.y + 30.0);
+		let shaded = (preview.min.x as usize..preview.max.x as usize).filter(|x| at(*x, head_y) == tokens.raised).count();
+		assert!(shaded > 100, "the header row carries its band: {shaded} pixels");
+		let anchor_y = (preview.min.y as usize..(preview.min.y + 42.0) as usize).filter(|y| {
+			(preview.min.x as usize..preview.max.x as usize).any(|x| at(x, *y) == tokens.border_strong)
+		}).count();
+		assert!(anchor_y > 0, "and its anchor line under it");
+
+		// the merge closes across: the boundary between A and B keeps a line in the body rows and
+		// none inside the merged first row
+		let gap_x = xs[1] as usize;
+		let body_line = (preview.min.y + 40.0) as usize..(preview.min.y + 80.0) as usize;
+		assert!(body_line.clone().any(|y| at(gap_x, y) == tokens.border), "the A|B boundary runs through the body");
+		// clear of the range's own top boundary: only an interior line would cross the whole band
+		let head_band = (preview.min.y as usize + 2)..(preview.min.y + 28.0) as usize;
+		assert!(!head_band.clone().any(|y| at(gap_x, y) == tokens.border), "and no line inside the merged span");
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
 	/// A picture's own scroll stops at the column's top (P27①'s spill, caught by eye on the
 	/// evidence frames): with a zoomed picture scrolled up, the tab bar's band holds none of it —
 	/// the column's own clip keeps the chrome clean. A picture at the fit is whole inside its
