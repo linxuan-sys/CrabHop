@@ -47,12 +47,18 @@ done
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$data/applications" 2>/dev/null || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -qtf "$data/icons/hicolor" 2>/dev/null || true
 
-# The examples, so a person has something to read and copy before writing their own: the factory
-# key table (the same 94 rows the help panel shows) and a commented config. Never overwrite a file
-# that is already there — those are the person's edits, not ours.
+# 配置直接生成好，用户打开就能改；已存在则一律不动
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/crabhop"
 mkdir -p "$conf"
-for pair in "keymap-default.toml:keymap.toml.example" "config.example.toml:config.toml.example" "theme.toml.example:theme.toml.example"; do
+
+[ -e "$conf/config.toml" ] || cat > "$conf/config.toml" <<'TOML'
+[columns]
+parent  = 1.0
+current = 4.0
+preview = 3.0
+TOML
+
+for pair in "theme.toml.example:theme.toml" "keymap-default.toml:keymap.toml.example"; do
 	src="$here/${pair%%:*}"
 	[ -f "$src" ] || src="$here/packaging/${pair%%:*}"
 	dst="$conf/${pair##*:}"
