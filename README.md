@@ -58,7 +58,7 @@ CrabHop 是一个桌面文件管理器：左边是当前目录的父级、中间
 
 ### 方式一：下载发布包（推荐）
 
-把下面四行**整段复制进终端**，一次跑完：
+
 
 ```sh
 wget https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.0/crabhop-1.0.0-linux-x86_64.tar.xz
@@ -66,16 +66,6 @@ tar xf crabhop-1.0.0-linux-x86_64.tar.xz
 cd crabhop-1.0.0
 ./install.sh
 ```
-
-四行各自的作用：
-
-1. `wget ...` —— 从 Releases 下载发布包（约 25M）到当前目录
-2. `tar xf ...` —— 解压，只会多出一个 `crabhop-1.0.0/` 目录
-3. `cd crabhop-1.0.0` —— 进入这个目录
-4. `./install.sh` —— 安装：把程序、菜单项、三档图标、许可文件装进 `~/.local`（不需要 root），
-   刷新桌面缓存，然后**把下载的压缩包移到回收站**——装完不留垃圾
-
-装完按 Super 键搜 `CrabHop` 即可，或终端直接运行 `crabhop`。
 
 ### 方式二：源码构建
 
@@ -202,20 +192,12 @@ header card (codec, resolution, frame rate, duration) when it is not.
 
 ### From the release tarball (recommended)
 
-Copy all four lines into a terminal and let them run:
-
 ```sh
 wget https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.0/crabhop-1.0.0-linux-x86_64.tar.xz
 tar xf crabhop-1.0.0-linux-x86_64.tar.xz
 cd crabhop-1.0.0
 ./install.sh
 ```
-
-What each line does: `wget` downloads the release (about 25M) into the current directory; `tar xf`
-unpacks it into one `crabhop-1.0.0/` directory; `cd` steps into that directory; `./install.sh` puts
-the binary, the menu entry, three icon sizes and the licences under `~/.local` (no root), refreshes
-the desktop caches, and moves the downloaded tarball to the trash — nothing is left to clean up.
-Search `CrabHop` in your application menu, or run `crabhop`.
 
 ### From source
 
