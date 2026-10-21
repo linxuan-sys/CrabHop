@@ -58,8 +58,6 @@ CrabHop 是一个桌面文件管理器：左边是当前目录的父级、中间
 
 ### 方式一：下载发布包（推荐）
 
-
-
 ```sh
 wget https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.0/crabhop-1.0.0-linux-x86_64.tar.xz
 tar xf crabhop-1.0.0-linux-x86_64.tar.xz
