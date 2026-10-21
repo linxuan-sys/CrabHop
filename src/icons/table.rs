@@ -5,7 +5,7 @@
 //! glyph) and `fg` (kept as the original hex constant: the coordination is what the table is
 //! loved for, so the colours stay yazi's and the window's own Catppuccin tokens are not mixed
 //! in). Licensed under the MIT License, Copyright (c) 2023 - sxyazi — see the repository's
-//! NOTICE file. Generated from the preset by `duckfm-native/tools/yazi_icons.py`, not by hand.
+//! NOTICE file. Generated from the preset by `crabhop/tools/yazi_icons.py`, not by hand.
 
 /// The directory names: 14 rules, matched exactly (yazi's own order, which is its
 /// precedence too).

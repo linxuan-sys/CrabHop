@@ -301,7 +301,7 @@ fn coarse_stage(source: [u32; 2]) -> Option<[u32; 2]> {
 		.then(|| [ (source[0] / 2).max(1), (source[1] / 2).max(1) ])
 }
 
-/// The window's own bucket of ready-to-upload pixels (P27⑥'s L0): `~/.cache/duckfm/preview-img`,
+/// The window's own bucket of ready-to-upload pixels (P27⑥'s L0): `~/.cache/crabhop/preview-img`,
 /// keyed by path, modification time and the size bucket — the same key the pane's textures use,
 /// so the second visit shows the picture without decoding anything. Raw RGBA in a small header,
 /// because a PNG round trip is the very cost this bucket exists to remove.
@@ -888,7 +888,7 @@ mod tests {
 		let mut answers = Vec::new();
 		// no mtime, so no cache is read or written: the test stays in memory
 		let shipped = decode_into(
-			"/tmp/duckfm-native-n2-never/never.png",
+			"/tmp/crabhop-n2-never/never.png",
 			None,
 			bytes.len() as u64,
 			&bytes,
@@ -911,7 +911,7 @@ mod tests {
 /// trusts — the test's own file under /tmp, so the real cache is never touched.
 	#[test]
 	fn a_bucket_entry_survives_the_round_trip() {
-		let at = std::env::temp_dir().join(format!("duckfm-native-bucket-{}.rgba", std::process::id()));
+		let at = std::env::temp_dir().join(format!("crabhop-bucket-{}.rgba", std::process::id()));
 		let _ = std::fs::remove_file(&at);
 
 		assert!(bucket_read(&at).is_none(), "nothing stands there yet");
@@ -949,7 +949,7 @@ mod tests {
 		let _ = std::fs::remove_file(&at);
 
 		// and a lookup with no mtime never writes: the key it would form names no file
-		assert!(!bucket_has("/tmp/duckfm-native-never/none.png", None, [ 300, 200 ]), "no mtime, no entry");
+		assert!(!bucket_has("/tmp/crabhop-never/none.png", None, [ 300, 200 ]), "no mtime, no entry");
 	}
 
 	/// A prefetch writes a cache entry and nothing else: with a modification time to judge it by, a
@@ -964,8 +964,8 @@ mod tests {
 			.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
 			.expect("the fixture encodes");
 
-		assert!(warm("/tmp/duckfm-native-n2-never/warm.png", None, bytes.len() as u64, &bytes, [ 256, 256 ]));
-		assert!(!warm("/tmp/duckfm-native-n2-never/warm.png", None, 4, b"nope", [ 256, 256 ]), "junk is not warmed");
+		assert!(warm("/tmp/crabhop-n2-never/warm.png", None, bytes.len() as u64, &bytes, [ 256, 256 ]));
+		assert!(!warm("/tmp/crabhop-n2-never/warm.png", None, 4, b"nope", [ 256, 256 ]), "junk is not warmed");
 	}
 
 	/// The fit-width rule (P27's first item — the final ruling): the picture's display size is the
@@ -1051,7 +1051,7 @@ mod tests {
 	#[test]
 	fn junk_is_not_a_picture() {
 		let mut shipped = false;
-		let outcome = decode_into("/tmp/duckfm-native-n2-never/junk.png", None, 4, b"nope", [ 100, 100 ], | _, _, _, _| {
+		let outcome = decode_into("/tmp/crabhop-n2-never/junk.png", None, 4, b"nope", [ 100, 100 ], | _, _, _, _| {
 			shipped = true
 		});
 

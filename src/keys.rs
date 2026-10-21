@@ -1,6 +1,6 @@
-//! duckfm's own keymap, read as data: `[[keys]]` binds a chord to a `run` verb, and the verbs this
+//! crabhop's own keymap, read as data: `[[keys]]` binds a chord to a `run` verb, and the verbs this
 //! window has an action for become those actions. The file is the window's own
-//! (`keymap-default.toml`, embedded, overridden by `$HOME/.config/duckfm/keymap.toml`) — yazi's
+//! (`keymap-default.toml`, embedded, overridden by `$HOME/.config/crabhop/keymap.toml`) — yazi's
 //! keymap is no longer read (P20).
 //!
 //! A keystroke is resolved the way yazi's own router resolves it: the bindings keep the order the
@@ -384,7 +384,7 @@ impl Keys {
 	/// stands, with a line on stderr — an empty table would leave the window without keys.
 	pub(crate) fn load() -> Self {
 		let path = std::env::var_os("HOME")
-			.map(|home| PathBuf::from(home).join(".config").join("duckfm").join("keymap.toml"));
+			.map(|home| PathBuf::from(home).join(".config").join("crabhop").join("keymap.toml"));
 
 		let Some(text) = path.as_ref().and_then(|path| std::fs::read_to_string(path).ok()) else {
 			return Self::parse(FACTORY);
@@ -915,7 +915,7 @@ mod tests {
 
 	/// The factory file carries no run this window does not act on: `U`'s update-config, the
 	/// whoosh family, `plugin bypass`, `find`, `suspend` and `tasks:show` were all dropped when the
-	/// table moved into duckfm's own file (P20) — a row nothing answers is a lie in the help
+	/// table moved into crabhop's own file (P20) — a row nothing answers is a lie in the help
 	/// overlay.
 	#[test]
 	fn the_factory_keymap_has_no_dead_binding() {
@@ -1147,7 +1147,7 @@ mod tests {
 	/// The file's own shape (P20): `[[keys]]`, `on` a string or an array, `run` a verb or several,
 	/// and `desc` the words the help overlay and the `which` hint read out.
 	#[test]
-	fn a_duckfm_keyfile_reads_its_own_shape() {
+	fn a_crabhop_keyfile_reads_its_own_shape() {
 		let text = r#"
 			[[keys]]
 			on   = "j"
@@ -1309,9 +1309,6 @@ mod tests {
 	/// reaches an action here, and `i` is the index panel's door.
 	#[test]
 	fn the_whoosh_family_has_no_way_in() {
-		let preset = include_str!("../../yazi-config/preset/keymap-default.toml");
-		assert!(!preset.contains("whoosh"), "the presets says nothing of whoosh");
-
 		for run in [ "plugin whoosh jump_by_key", "plugin whoosh save", "plugin whoosh jump_key_k" ] {
 			assert_eq!(action_of(run), None, "{run}");
 		}

@@ -604,7 +604,7 @@ mod tests {
 			assert!(all.contains(word), "{word} survived the wrap: {all:?}");
 		}
 
-		let doc = layout("你好 duckfm！这是第二段：中文与 English 混排 A", 100.0, &tokens(), &HashMap::new());
+		let doc = layout("你好 crabhop！这是第二段：中文与 English 混排 A", 100.0, &tokens(), &HashMap::new());
 		let joined: String = doc.rows.iter().map(|row| row.text.as_str()).collect::<Vec<_>>().join("");
 		assert!(joined.contains("这是第二段"), "no character is lost to the wrap: {joined:?}");
 	}

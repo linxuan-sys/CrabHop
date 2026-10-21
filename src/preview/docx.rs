@@ -1,6 +1,6 @@
 //! `word/document.xml` as plain text: what a preview needs, and nothing else.
 //!
-//! Moved here from the legacy window (`duckfm/src/preview/docx.rs`) whole: the extraction was
+//! Moved here from the legacy window whole: the extraction was
 //! verified there, and a preview's job is structure, not typographic fidelity (§3.6).
 
 use std::io::{BufReader, Cursor};

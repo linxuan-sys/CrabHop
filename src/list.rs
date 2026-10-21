@@ -59,7 +59,7 @@ pub(crate) fn icon_for(name: &str, dir: bool, exec: bool, tokens: &Tokens) -> (&
 	let ext = name.rsplit('.').next().unwrap_or_default().to_lowercase();
 
 	// the filetype rules the design's §3.7 names — images, media, archives, documents, executables
-	// — with the baseline's own Catppuccin mapping behind them (`duckfm/src/gui/tokens.rs`, the
+	// — with the baseline's own Catppuccin mapping behind them (`crabhop/src/gui/tokens.rs` of the old tree, the
 	// place the design defers to). Anything the rules do not name keeps the plain file's face.
 	let colour = match ext.as_str() {
 		"png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "tif" | "tiff" | "avif" | "heic" | "ico" | "jxl" => {

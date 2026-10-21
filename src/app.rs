@@ -647,7 +647,7 @@ pub(crate) struct App {
 	/// Whether the first list has been seen at all — the metric fires once.
 	first: bool,
 
-	/// The seed a replay feeds in (`DUCKFM_KEYS`, `;`-separated), and the shots it may ask for.
+	/// The seed a replay feeds in (`CRABHOP_KEYS`, `;`-separated), and the shots it may ask for.
 	seed:      Vec<String>,
 	seed_next: usize,
 	seed_at:   Instant,
@@ -661,7 +661,7 @@ pub(crate) struct App {
 
 	hover:     Option<egui::Pos2>,
 	/// Whether the real fonts are in. They go in before the first frame now; the
-	/// `DUCKFM_FONTS=late` arm of the A/B starts false and swaps them behind the first frame.
+	/// `CRABHOP_FONTS=late` arm of the A/B starts false and swaps them behind the first frame.
 	dressed:   bool,
 	/// The first frame that draws with the real faces: 1 with the fonts early, 2 when the swap
 	/// happens behind the first frame. The A/B reads this through `metrics::first_dressed`.
@@ -693,13 +693,13 @@ impl App {
 		// the first paint and ~95ms more to the frame that actually carries the type — on this
 		// stack the deferred first frame falls back to the system faces, which are the expensive
 		// ones to shape, and the deferred arm pays for Maple on the second frame anyway.
-		// `DUCKFM_FONTS=late` is that other arm, kept for the measurement.
-		let late = std::env::var("DUCKFM_FONTS").is_ok_and(|mode| mode == "late");
+		// `CRABHOP_FONTS=late` is that other arm, kept for the measurement.
+		let late = std::env::var("CRABHOP_FONTS").is_ok_and(|mode| mode == "late");
 		if !late {
 			Tokens::install(&cc.egui_ctx);
 		}
 
-		let seed: Vec<String> = std::env::var("DUCKFM_KEYS")
+		let seed: Vec<String> = std::env::var("CRABHOP_KEYS")
 			.map(|keys| keys.split(';').map(|step| step.trim().to_owned()).filter(|s| !s.is_empty()).collect())
 			.unwrap_or_default();
 
@@ -713,7 +713,7 @@ impl App {
 		let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
 		// the font arm is read once more here: `new` weighs it for the early install, and the
 		// first dressed frame is the other half of the same measurement
-		let late = std::env::var("DUCKFM_FONTS").is_ok_and(|mode| mode == "late");
+		let late = std::env::var("CRABHOP_FONTS").is_ok_and(|mode| mode == "late");
 		let config = Config::load();
 		let shares = config.columns.shares();
 
@@ -803,7 +803,7 @@ impl App {
 			seed,
 			seed_next: 0,
 			seed_at: Instant::now(),
-			shot: std::env::var("DUCKFM_SHOT").ok().map(|prefix| (prefix, 1)),
+			shot: std::env::var("CRABHOP_SHOT").ok().map(|prefix| (prefix, 1)),
 			reveal: None,
 			hover: None,
 			menu_panel: None,
@@ -1057,7 +1057,7 @@ impl App {
 				self.spot = !self.spot;
 				self.spot_chord = false;
 			}
-			other => eprintln!("duckfm-native: {other:?} lands in N1"),
+			other => eprintln!("crabhop: {other:?} lands in N1"),
 		}
 
 		ctx.request_repaint();
@@ -4751,8 +4751,8 @@ impl App {
 				.and_then(|picture| picture.save(&path).map_err(|e| e.to_string()));
 
 			match written {
-				Ok(()) => eprintln!("duckfm-native: shot {path}"),
-				Err(e) => eprintln!("duckfm-native: shot {path}: {e}"),
+				Ok(()) => eprintln!("crabhop: shot {path}"),
+				Err(e) => eprintln!("crabhop: shot {path}: {e}"),
 			}
 		});
 	}
@@ -5547,7 +5547,7 @@ impl App {
 		self.config.columns.preview = self.shares[2];
 
 		if let Err(e) = self.config.save() {
-			eprintln!("duckfm-native: config not written: {e}");
+			eprintln!("crabhop: config not written: {e}");
 		}
 	}
 
@@ -7004,7 +7004,7 @@ impl App {
 		};
 		let pos = pos2(x, at.min.y + 12.0);
 
-		egui::Area::new(egui::Id::unique("duckfm-spot"))
+		egui::Area::new(egui::Id::unique("crabhop-spot"))
 			.order(egui::Order::Foreground)
 			.fixed_pos(pos)
 			.fade_in(true)
@@ -7024,7 +7024,7 @@ impl App {
 						});
 						ui.separator();
 
-						egui::Grid::new("duckfm-spot-grid").num_columns(2).spacing(vec2(8.0, 5.0)).show(ui, |ui| {
+						egui::Grid::new("crabhop-spot-grid").num_columns(2).spacing(vec2(8.0, 5.0)).show(ui, |ui| {
 							for (key, value) in rows {
 								ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 									ui.label(egui::RichText::new(key).size(13.0).color(tokens.disabled).monospace());
@@ -8214,9 +8214,9 @@ impl App {
 
 		view.items = (0..count)
 			.map(|n| trash::TrashItem {
-				id:              PathBuf::from(format!("/tmp/duckfm-bin/info/item-{n:03}.trashinfo")).into_os_string(),
+				id:              PathBuf::from(format!("/tmp/crabhop-bin/info/item-{n:03}.trashinfo")).into_os_string(),
 				name:            format!("item-{n:03}.txt").into(),
-				original_parent: PathBuf::from("/tmp/duckfm-bin/src"),
+				original_parent: PathBuf::from("/tmp/crabhop-bin/src"),
 				time_deleted:    1_700_000_000 + n as i64,
 			})
 			.collect();
@@ -8390,7 +8390,7 @@ mod index_tests {
 	fn the_index_gathers_three_zones_without_repeating_itself() {
 		let books = vec![
 			crate::book::Bookmark { name: "tmp".to_owned(), path: PathBuf::from("/tmp") },
-			crate::book::Bookmark { name: "gone".to_owned(), path: PathBuf::from("/tmp/duckfm-p14-never/gone") },
+			crate::book::Bookmark { name: "gone".to_owned(), path: PathBuf::from("/tmp/crabhop-p14-never/gone") },
 		];
 		let ranked = vec![
 			(PathBuf::from("/home/x/dev"), 9.5),
@@ -8517,7 +8517,7 @@ mod query_tests {
 	/// without the filesystem being asked.
 	#[test]
 	fn the_query_reads_as_a_path_before_it_reads_as_a_search() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-query-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-query-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("sub/inner")).expect("a tree");
 		std::fs::write(dir.join("a.txt"), b"x").expect("a file");

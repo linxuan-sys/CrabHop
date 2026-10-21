@@ -252,7 +252,7 @@ mod tests {
 	/// (N3's drawer has the × that sets this flag).
 	#[test]
 	fn a_cancelled_pack_writes_nothing_and_leaves_no_archive() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-pack-cancel-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-pack-cancel-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("tree")).expect("a tree");
 		std::fs::write(dir.join("tree/one.txt"), b"one").expect("a file");
@@ -274,7 +274,7 @@ mod tests {
 	}
 
 	fn scratch(name: &str) -> PathBuf {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-pack-{name}-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-pack-{name}-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("tree/inner")).expect("a tree");
 		std::fs::write(dir.join("tree/a.txt"), b"hello").expect("a file");

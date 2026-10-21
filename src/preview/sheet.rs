@@ -1,6 +1,6 @@
 //! The first screenful of a spreadsheet, as columns of text.
 //!
-//! Moved here from the legacy window (`duckfm/src/preview/sheet.rs`); the one change is the width
+//! Moved here from the legacy window; the one change is the width
 //! measure — the legacy window used ratatui's cell width, this one the list's own
 //! `crate::list::cell_width`, so a CJK cell still lines up with the ASCII ones around it.
 

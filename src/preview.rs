@@ -239,7 +239,7 @@ struct Anim {
 /// Whether the window is asked to keep animations still: an environment answer for now, and the
 /// place the settings window's own switch will land (N3's motion audit).
 fn reduced_motion() -> bool {
-	static STILL: LazyLock<bool> = LazyLock::new(|| std::env::var_os("DUCKFM_REDUCED_MOTION").is_some());
+	static STILL: LazyLock<bool> = LazyLock::new(|| std::env::var_os("CRABHOP_REDUCED_MOTION").is_some());
 
 	*STILL
 }
@@ -1025,8 +1025,11 @@ impl PreviewPane {
 
 	fn content(&self) -> f32 {
 		match (&self.show, &self.raw) {
-			(Show::Dir { doc: Some(doc), .. } | Show::Archive { doc: Some(doc), .. }, _) => doc.total + PAD,
+			// a raw text outranks whatever was on screen before it: the pane's own answer is what
+			// the wheel measures — with the old order a listing loaded before the file kept
+			// `content` at the listing's own height while the file's rows were being drawn
 			(_, Some(_)) => self.laid.as_ref().map_or(PAD, |doc| doc.total + PAD),
+			(Show::Dir { doc: Some(doc), .. } | Show::Archive { doc: Some(doc), .. }, _) => doc.total + PAD,
 			// the picture's own height at the column's width (P27's first item): a tall picture is
 			// a page to walk, so this is what the wheel and the scrollbar measure against
 			(Show::Image { .. }, None) => self.image_height().map_or(PAD, |tall| tall + PAD),
@@ -1429,7 +1432,7 @@ impl PreviewPane {
 	/// 1.5s after (§3.1).
 	fn badge(&self, painter: &Painter, anchor: Pos2, align: Align2, label: &str, tokens: &Tokens) {
 		let alive = self.touched.is_some_and(|at| at.elapsed() < Duration::from_millis(1500));
-		let alpha = self.ctx.animate_bool_with_time(Id::unique("duckfm-preview-badge"), alive, 0.2);
+		let alpha = self.ctx.animate_bool_with_time(Id::unique("crabhop-preview-badge"), alive, 0.2);
 		if alpha <= 0.01 {
 			return;
 		}
@@ -2231,7 +2234,7 @@ fn preload_slot(slot: Arc<Semaphore>) -> Option<tokio::sync::OwnedSemaphorePermi
 	None
 }
 
-/// The window's own text cache (P27⑥): `~/.cache/duckfm/preview-text`, keyed by path and
+/// The window's own text cache (P27⑥): `~/.cache/crabhop/preview-text`, keyed by path and
 /// modification time — the words of a file cost their read once, not once a session. No
 /// modification time is nothing to judge an entry by, so nothing is read or written then.
 fn text_cache_at(path: &str, mtime: Option<SystemTime>) -> Option<PathBuf> {
@@ -2311,7 +2314,7 @@ mod tests {
 	/// The legacy wrap, kept whole: a wrapped line fits the column and loses nothing.
 	#[test]
 	fn a_wrapped_line_fits_the_column_and_loses_nothing() {
-		let line = "你好 duckfm！这是 docx 预览测试，第二段：中文与 English 混排 A 单元格A";
+		let line = "你好 crabhop！这是 docx 预览测试，第二段：中文与 English 混排 A 单元格A";
 		let cols = 12;
 
 		let pieces = wrap_plain(line, cols);
@@ -2489,7 +2492,7 @@ mod tests {
 	#[test]
 	fn a_hover_is_queued_and_not_shown_before_its_answer() {
 		let mut pane = PreviewPane::default();
-		pane.look(Path::new("/tmp/duckfm-native-n2-never/a.png"), None);
+		pane.look(Path::new("/tmp/crabhop-n2-never/a.png"), None);
 
 		assert!(pane.queued.is_some(), "the job waits for its debounce");
 		assert!(matches!(pane.show, Show::Empty), "and nothing has replaced the screen yet");
@@ -2499,13 +2502,13 @@ mod tests {
 		assert!(pane.pending.is_none());
 
 		// a directory is read on a worker: it queues too, and the screen keeps what it had
-		pane.look(Path::new("/tmp/duckfm-native-n2-never/dir"), Some(&dir_entry()));
+		pane.look(Path::new("/tmp/crabhop-n2-never/dir"), Some(&dir_entry()));
 		assert_eq!(pane.kind, Kind::Dir);
 		assert!(pane.queued.is_some(), "a listing is not read on this thread");
 		assert!(matches!(pane.show, Show::Empty), "and nothing has replaced the screen yet");
 
 		// a format with no decoder is known at once
-		pane.look(Path::new("/tmp/duckfm-native-n2-never/a.avif"), None);
+		pane.look(Path::new("/tmp/crabhop-n2-never/a.avif"), None);
 		assert!(matches!(pane.show, Show::Placeholder(_)));
 		assert!(pane.queued.is_none());
 	}
@@ -2531,7 +2534,7 @@ mod tests {
 		];
 
 		let mut pane = PreviewPane::default();
-		pane.path = Some(PathBuf::from("/tmp/duckfm-native-n2-never/tree.zip"));
+		pane.path = Some(PathBuf::from("/tmp/crabhop-n2-never/tree.zip"));
 		pane.collapsed = archive::default_collapsed(&items);
 		let (doc, _) = archive_doc(&items, Some(items.len()), &pane.collapsed, &tokens);
 		pane.show = Show::Archive { items, doc: Some(doc), total: Some(5), truncated: false };
@@ -2635,7 +2638,7 @@ mod tests {
 	#[test]
 	fn a_hovered_archive_queues_its_listing() {
 		let mut pane = PreviewPane::default();
-		pane.look(Path::new("/tmp/duckfm-native-p11-never/a.zip"), None);
+		pane.look(Path::new("/tmp/crabhop-p11-never/a.zip"), None);
 
 		assert_eq!(pane.kind, Kind::Archive);
 		assert!(pane.queued.is_some(), "the listing is read on a worker");
@@ -2716,7 +2719,7 @@ mod tests {
 		let mut pane = PreviewPane::default();
 		pane.target = [ 400, 300 ];
 
-		let dir = PathBuf::from("/tmp/duckfm-native-n2-never/dir");
+		let dir = PathBuf::from("/tmp/crabhop-n2-never/dir");
 		let pictures: Vec<(PathBuf, Option<Entry>)> = (0..3)
 			.map(|i| {
 				let name = format!("p{i}.png");
@@ -2736,7 +2739,7 @@ mod tests {
 		assert_eq!(sweep.stamp, stamp, "and it is the same visit");
 
 		// a new directory is a new visit: the old stamp is left behind
-		let other = PathBuf::from("/tmp/duckfm-native-n2-never/other");
+		let other = PathBuf::from("/tmp/crabhop-n2-never/other");
 		pane.warm(&other, &[], &[], &[]);
 		assert_ne!(pane.sweep.as_ref().expect("a sweep").stamp, stamp, "a new visit, a new stamp");
 
@@ -2747,7 +2750,7 @@ mod tests {
 		pane.sweep_tick();
 		assert!(pane.sweep.is_some(), "no column, no sweep to run");
 
-		let queueless = PathBuf::from("/tmp/duckfm-native-n2-never/empty");
+		let queueless = PathBuf::from("/tmp/crabhop-n2-never/empty");
 		pane.target = [ 400, 300 ];
 		pane.warm(&queueless, &[], &[], &[]);
 		pane.sweep.as_mut().expect("a sweep").since = Instant::now() - Duration::from_millis(900);

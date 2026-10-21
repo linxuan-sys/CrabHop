@@ -100,11 +100,11 @@ impl Tokens {
 		let mut fonts = FontDefinitions::default();
 		fonts.font_data.insert(
 			"maple".to_owned(),
-			Arc::new(FontData::from_static(include_bytes!("../../duckfm/assets/fonts/MapleMonoNormal-NF-CN-Regular.ttf"))),
+			Arc::new(FontData::from_static(include_bytes!("../assets/fonts/MapleMonoNormal-NF-CN-Regular.ttf"))),
 		);
 		fonts.font_data.insert(
 			"maple-bold".to_owned(),
-			Arc::new(FontData::from_static(include_bytes!("../../duckfm/assets/fonts/MapleMonoNormal-NF-CN-Bold.ttf"))),
+			Arc::new(FontData::from_static(include_bytes!("../assets/fonts/MapleMonoNormal-NF-CN-Bold.ttf"))),
 		);
 
 		let mut mono = vec![ "maple".to_owned() ];

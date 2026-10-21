@@ -1,5 +1,5 @@
 //! What has been visited and how worth visiting it still is — the `z` / `Z` panel's own data
-//! (§5.3), kept in `$XDG_DATA_HOME/duckfm/frecency.json`. A visit's weight decays with time, so
+//! (§5.3), kept in `$XDG_DATA_HOME/crabhop/frecency.json`. A visit's weight decays with time, so
 //! a directory abandoned half a year ago gives way to the one worked in this week.
 
 use std::path::{Path, PathBuf};

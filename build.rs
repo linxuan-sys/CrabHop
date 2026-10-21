@@ -3,10 +3,8 @@
 //! static archive only resolves the symbols it has already seen by the time it is scanned, and the
 //! order the other link arguments arrive in is not ours to promise.
 //!
-//! The library lives in exactly one place: `duckfm/libs/pdfium/lib`, fetched by
-//! `duckfm/scripts/fetch-pdfium.sh` (the pinned sha256 is that script's). The workspace's
-//! `.cargo/config.toml` points `PDFIUM_STATIC_LIB_PATH` there, so this crate reuses the same copy
-//! the legacy window built against instead of downloading a second one.
+//! The library lives in exactly one place: `libs/pdfium/lib`, fetched by `scripts/fetch-pdfium.sh` (the pinned sha256 is that script's).
+//! `.cargo/config.toml` points `PDFIUM_STATIC_LIB_PATH` there.
 
 fn main() {
 	println!("cargo:rerun-if-env-changed=PDFIUM_STATIC_LIB_PATH");
@@ -19,7 +17,7 @@ fn main() {
 	};
 
 	if !std::path::Path::new(&dir).join("libpdfium.a").exists() {
-		println!("cargo:warning=libpdfium.a is not in {dir}; run duckfm/scripts/fetch-pdfium.sh");
+		println!("cargo:warning=libpdfium.a is not in {dir}; run scripts/fetch-pdfium.sh");
 	}
 
 	println!("cargo:rustc-link-search=native={dir}");

@@ -1,5 +1,5 @@
 //! The bookmarks (§5.1–§5.3), natively — whoosh's job without a plugin: a key, a name and a
-//! path, in `$XDG_DATA_HOME/duckfm/bookmarks.toml`. A key is assigned automatically and can be
+//! path, in `$XDG_DATA_HOME/crabhop/bookmarks.toml`. A key is assigned automatically and can be
 //! changed by hand in the file; a temp bookmark lives only in this run.
 
 use std::path::{Path, PathBuf};

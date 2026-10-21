@@ -222,7 +222,7 @@ mod tests {
 	/// is already free is itself.
 	#[test]
 	fn a_free_name_is_the_first_one_nothing_stands_at() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-restore-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-restore-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -248,7 +248,7 @@ mod tests {
 	/// thing it cannot take — the error names the path a person typed.
 	#[test]
 	fn a_permanent_delete_takes_files_and_directories() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-trash-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-trash-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("deep/inside")).expect("a directory");
 		std::fs::write(dir.join("deep/inside/file.txt"), b"x").expect("a file");

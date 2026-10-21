@@ -2,7 +2,7 @@
 //! palette the window's tokens use (§3.3), and only the lines a scroll actually shows.
 //!
 //! The backend is `default-fancy` — pure Rust. The workspace's own syntect is built with
-//! `regex-onig`, an Oniguruma C library this project bans; `duckfm-native/Cargo.toml` says so in
+//! `regex-onig`, an Oniguruma C library this project bans; `crabhop/Cargo.toml` says so in
 //! writing and this crate takes syntect directly instead of through the workspace.
 //!
 //! Highlighting walks a file's lines in order, because a rich syntax cannot be understood line by

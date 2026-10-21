@@ -1,7 +1,7 @@
-# duckfm 键位表（duckfm 自有格式，非 yazi 的 keymap.toml）
+# crabhop 键位表（crabhop 自有格式，非 yazi 的 keymap.toml）
 #
 #   on    一个键写作字符串（"h"、"<Enter>"、">"、"<Space>"）；和弦写作数组（[ "g", "h" ]）
-#   run   动词：duckfm 动作名。带参数的沿用 yazi 的写法（`seek 5`、`cd ~`、`rename --cursor=start`、
+#   run   动词：crabhop 动作名。带参数的沿用 yazi 的写法（`seek 5`、`cd ~`、`rename --cursor=start`、
 #         `enter --bypass`、`plugin gvfs -- select-then-mount --jump` 等），参数语义见 keys.rs::action_of
 #   desc  中文说明，帮助浮层（~ / F1）与和弦提示浮层都读它
 #
@@ -11,7 +11,7 @@
 # 单键被前面的和弦首键遮住的（`r`、`p`、`o`、`G`：它们的 `r …`/`p …`/`o …`/`G m` 和弦写在前面，
 # yazi 自己的表也是这样）没有搬 —— 按 `r` 之类的键请按和弦的写法（`r r` 等），浮层会提示续键。
 #
-# 用户覆盖：$HOME/.config/duckfm/keymap.toml。有且能解析出绑定时整表取代本文件；
+# 用户覆盖：$HOME/.config/crabhop/keymap.toml。有且能解析出绑定时整表取代本文件；
 # 文件为空/整表解析不出绑定时本文件继续生效（并在 stderr 说一句）。
 #
 # 本表 = 用户 P21 键位表（唯一法典）。已落地的行在这里；表里本窗口尚未实现的功能

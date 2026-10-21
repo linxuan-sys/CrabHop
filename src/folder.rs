@@ -280,7 +280,7 @@ mod tests {
 	/// snapshot without anyone asking for a re-read.
 	#[test]
 	fn a_file_made_by_another_program_arrives_by_itself() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-watch-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-watch-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -323,7 +323,7 @@ mod tests {
 	/// worker's answer replaces it.
 	#[test]
 	fn a_directory_reads_off_the_thread_and_sorts_directories_first() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-test-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-test-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("beta")).expect("a directory");
 		std::fs::write(dir.join("alpha.txt"), b"hello").expect("a file");

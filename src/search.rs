@@ -148,7 +148,7 @@ mod tests {
 	use super::*;
 
 	fn scratch(name: &str) -> PathBuf {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-search-{name}-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-search-{name}-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("docs")).expect("a directory");
 		std::fs::write(dir.join("docs/readme.md"), b"# hello\n").expect("a file");

@@ -820,7 +820,7 @@ mod tests {
 		let empty = tools_in("");
 		assert!(empty.frame_tool().is_none() && empty.ffprobe.is_none(), "nothing on an empty PATH");
 
-		let dir = std::env::temp_dir().join(format!("duckfm-native-tools-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-tools-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 		let fake = dir.join("ffmpegthumbnailer");
@@ -843,7 +843,7 @@ mod tests {
 	/// its own group first — and the call says so by answering nothing.
 	#[test]
 	fn a_tool_that_will_not_come_back_is_killed() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-leash-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-leash-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 		let script = dir.join("slow-tool");

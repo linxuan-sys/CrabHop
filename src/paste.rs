@@ -177,7 +177,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 /// A hidden sibling name nobody holds yet.
 fn temp_name(to: &Path) -> PathBuf {
 	static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-	let mut name = std::ffi::OsString::from(".duckfm-paste-");
+	let mut name = std::ffi::OsString::from(".crabhop-paste-");
 	name.push(to.file_name().unwrap_or_default());
 	name.push("-");
 	name.push(SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed).to_string());
@@ -201,7 +201,7 @@ mod tests {
 	/// it away — and a name already at the destination is an error unless the caller forced it.
 	#[test]
 	fn a_copy_leaves_the_original_and_a_cut_does_not() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-paste-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-paste-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("src/sub")).expect("a tree");
 		std::fs::write(dir.join("src/sub/a.txt"), b"x").expect("a file");
@@ -253,7 +253,7 @@ mod tests {
 	/// destination standing, with no half-built temporary left behind.
 	#[test]
 	fn a_force_paste_onto_itself_keeps_the_file_and_a_failed_one_keeps_the_old() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-paste-self-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-paste-self-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("dst")).expect("a destination");
 		std::fs::write(dir.join("a.txt"), b"the source").expect("a source");
@@ -279,7 +279,7 @@ mod tests {
 		let failed = answer(run(vec![ dir.join("src.txt") ], dir.join("dst"), false, true));
 		assert!(failed.is_err(), "{failed:?}");
 		assert_eq!(std::fs::read(dir.join("dst/src.txt")).unwrap(), b"the old destination", "the old destination survives a failed force paste");
-		let leftovers = std::fs::read_dir(dir.join("dst")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with(".duckfm-paste-")).count();
+		let leftovers = std::fs::read_dir(dir.join("dst")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with(".crabhop-paste-")).count();
 		assert_eq!(leftovers, 0, "no temporary tree is left behind");
 		std::fs::set_permissions(dir.join("src.txt"), std::os::unix::fs::PermissionsExt::from_mode(0o644)).expect("unsealed");
 

@@ -49,7 +49,7 @@ impl Columns {
 }
 
 impl Config {
-	/// The config file, under `$XDG_CONFIG_HOME/duckfm` (or `~/.config/duckfm`), the way the
+	/// The config file, under `$XDG_CONFIG_HOME/crabhop` (or `~/.config/crabhop`), the way the
 	/// XDG spec says it belongs there.
 	pub(crate) fn path() -> Option<PathBuf> {
 		if let Some(dir) = CONFIG_DIR.get() {
@@ -60,7 +60,7 @@ impl Config {
 			.map(PathBuf::from)
 			.or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
 
-		Some(base.join("duckfm").join("config.toml"))
+		Some(base.join("crabhop").join("config.toml"))
 	}
 
 	/// The desktop's own preferences file, `mimeapps.list`, beside the window's config (P31's
@@ -76,8 +76,8 @@ impl Config {
 		Some(base.join("mimeapps.list"))
 	}
 
-/// The state file a feature keeps between runs, under `$XDG_DATA_HOME/duckfm` (or
-	/// `~/.local/share/duckfm`) — the place the XDG spec says state belongs. A test may claim a
+/// The state file a feature keeps between runs, under `$XDG_DATA_HOME/crabhop` (or
+	/// `~/.local/share/crabhop`) — the place the XDG spec says state belongs. A test may claim a
 	/// directory of its own instead, so a test that saves never touches what the person saved.
 	pub(crate) fn state(name: &str) -> Option<PathBuf> {
 		let base = match STATE_DIR.get() {
@@ -87,18 +87,18 @@ impl Config {
 				.or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share")))?,
 		};
 
-		Some(base.join("duckfm").join(name))
+		Some(base.join("crabhop").join(name))
 	}
 
-	/// A cache directory a feature keeps rebuilt-at-will data under, `$XDG_CACHE_HOME/duckfm` (or
-	/// `~/.cache/duckfm`) — the place the XDG spec says caches belong. Nothing here is a document:
+	/// A cache directory a feature keeps rebuilt-at-will data under, `$XDG_CACHE_HOME/crabhop` (or
+	/// `~/.cache/crabhop`) — the place the XDG spec says caches belong. Nothing here is a document:
 	/// every entry may be lost without a word (P27⑥'s preview buckets).
 	pub(crate) fn cache(name: &str) -> Option<PathBuf> {
 		let base = std::env::var_os("XDG_CACHE_HOME")
 			.map(PathBuf::from)
 			.or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
 
-		Some(base.join("duckfm").join(name))
+		Some(base.join("crabhop").join(name))
 	}
 
 	/// Make a state directory, 0700 the first time there is something to keep in it.

@@ -1,13 +1,13 @@
 [package]
-name        = "duckfm-native"
-description = "Duckfm, rewritten natively: the window owns its state and draws its own list"
+name        = "crabhop"
+description = "CrabHop: a native, keyboard-first file manager — the window owns its state and draws its own list"
 version     = "26.9.1"
 edition     = "2024"
 license     = "MIT"
 rust-version = "1.95.0"
 
 [[bin]]
-name = "duckfm-native"
+name = "crabhop"
 path = "src/main.rs"
 
 [dependencies]

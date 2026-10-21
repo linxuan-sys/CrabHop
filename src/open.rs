@@ -233,10 +233,10 @@ mod tests {
 	/// says no, is a failure — and only a clean exit is an opening.
 	#[test]
 	fn the_system_open_reports_its_own_failure() {
-		assert!(system_with("/bin/true", Path::new("/tmp/duckfm-native-n2-never/a.zzz")), "a clean exit is an opening");
-		assert!(!system_with("/bin/false", Path::new("/tmp/duckfm-native-n2-never/a.zzz")), "a refusal is a failure");
+		assert!(system_with("/bin/true", Path::new("/tmp/crabhop-n2-never/a.zzz")), "a clean exit is an opening");
+		assert!(!system_with("/bin/false", Path::new("/tmp/crabhop-n2-never/a.zzz")), "a refusal is a failure");
 		assert!(
-			!system_with("/tmp/duckfm-native-n2-never/no-such-opener", Path::new("/tmp/a.zzz")),
+			!system_with("/tmp/crabhop-n2-never/no-such-opener", Path::new("/tmp/a.zzz")),
 			"a launcher that is not there is a failure too"
 		);
 	}
@@ -263,7 +263,7 @@ mod tests {
 	/// a line with a blank brings paths.
 	#[test]
 	fn candidates_are_commands_until_a_blank_says_otherwise() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-open-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-open-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 		std::fs::write(dir.join("photo.jpg"), b"x").expect("a file");

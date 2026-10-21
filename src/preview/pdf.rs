@@ -4,7 +4,7 @@
 //! A PDF preview is a picture of a page (§3.4), rendered at 150 DPI so its words can actually be
 //! read. Every step is fallible and none is fatal: when the library cannot be bound, or the
 //! document cannot be read, the caller falls back to text and the window stays up. Moved here from
-//! the legacy window (`duckfm/src/preview/pdfium.rs` + `pdf.rs`) with the DPI rule and the page
+//! the legacy window's pdfium module with the DPI rule and the page
 //! parameter added for the spec's page flip.
 
 use std::sync::OnceLock;
@@ -16,8 +16,8 @@ use crate::preview::img;
 /// The faces the window already carries, handed to PDFium for documents that did not embed their
 /// own: a Chinese PDF built without its typeface asks for one by name, and with no answer its
 /// glyphs come out blank.
-const MAPLE_REGULAR: &[u8] = include_bytes!("../../../duckfm/assets/fonts/MapleMonoNormal-NF-CN-Regular.ttf");
-const MAPLE_BOLD: &[u8] = include_bytes!("../../../duckfm/assets/fonts/MapleMonoNormal-NF-CN-Bold.ttf");
+const MAPLE_REGULAR: &[u8] = include_bytes!("../../assets/fonts/MapleMonoNormal-NF-CN-Regular.ttf");
+const MAPLE_BOLD: &[u8] = include_bytes!("../../assets/fonts/MapleMonoNormal-NF-CN-Bold.ttf");
 
 /// The spec's rendering floor (§3.4): 150 DPI, whatever the column's own size, so the page's
 /// letters survive the trip. The column fit only ever scales it down.
@@ -59,11 +59,11 @@ fn library() -> Option<&'static Pdfium> {
 				let mut pdfium = Pdfium::new(bindings);
 				pdfium.set_custom_font_provider(Box::new(MapleFonts));
 
-				eprintln!("duckfm-native: pdfium is bound");
+				eprintln!("crabhop: pdfium is bound");
 				Some(pdfium)
 			}
 			Err(e) => {
-				eprintln!("duckfm-native: pdfium is not available, PDFs fall back to text: {e}");
+				eprintln!("crabhop: pdfium is not available, PDFs fall back to text: {e}");
 				None
 			}
 		})

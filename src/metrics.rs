@@ -1,10 +1,10 @@
-//! The numbers the acceptance asks for, taken where they happen. Off unless `DUCKFM_TIMING` is
+//! The numbers the acceptance asks for, taken where they happen. Off unless `CRABHOP_TIMING` is
 //! set; the state that is measured is kept either way, so measuring hardly changes the measurement.
 
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
-static ENABLED: LazyLock<bool> = LazyLock::new(|| std::env::var_os("DUCKFM_TIMING").is_some());
+static ENABLED: LazyLock<bool> = LazyLock::new(|| std::env::var_os("CRABHOP_TIMING").is_some());
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
 static PENDING: LazyLock<Mutex<Option<(Instant, &'static str)>>> = LazyLock::new(|| Mutex::new(None));
 static FIRST: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));

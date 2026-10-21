@@ -249,7 +249,7 @@ mod tests {
 	/// file as a file — and the permissions in them are the words, not the bits.
 	#[test]
 	fn the_rows_say_what_a_thing_is_in_words() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-spot-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-spot-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("sub")).expect("a directory");
 		std::fs::write(dir.join("note.txt"), b"hello").expect("a file");
@@ -294,7 +294,7 @@ mod tests {
 	/// when the column is showing that very file.
 	#[test]
 	fn a_picture_gets_its_own_section_and_a_file_gets_none() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-spot-pic-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-spot-pic-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 		std::fs::write(dir.join("note.txt"), b"hello").expect("a file");

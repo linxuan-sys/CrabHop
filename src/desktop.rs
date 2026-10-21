@@ -724,7 +724,7 @@ image/png=c.desktop;
 	/// `$TERMINAL`, the four names — and nothing at all when none of them is there.
 	#[test]
 	fn the_terminal_chain_takes_the_first_it_finds() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-terminal-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-terminal-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 		let put = |name: &str| {
@@ -754,7 +754,7 @@ image/png=c.desktop;
 		assert_eq!(terminal(&path, Some("wezterm"), Some("kgx.desktop"), &entries), Some(vec![ "xdg-terminal-exec".to_owned() ]));
 
 		// 2. the desktop's own answer, its codes dropped
-		let without = std::env::temp_dir().join(format!("duckfm-native-terminal-empty-{}", std::process::id()));
+		let without = std::env::temp_dir().join(format!("crabhop-terminal-empty-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&without);
 		std::fs::create_dir_all(&without).expect("a directory");
 		let bare_path = without.to_str().unwrap().to_owned();
@@ -765,7 +765,7 @@ image/png=c.desktop;
 
 		// 4. the four names, in their own order
 		assert_eq!(terminal(&path, None, None, &[]), Some(vec![ "xdg-terminal-exec".to_owned() ]));
-		let kitty_only = std::env::temp_dir().join(format!("duckfm-native-terminal-kitty-{}", std::process::id()));
+		let kitty_only = std::env::temp_dir().join(format!("crabhop-terminal-kitty-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&kitty_only);
 		std::fs::create_dir_all(&kitty_only).expect("a directory");
 		let at = kitty_only.join("kitty");
@@ -788,7 +788,7 @@ image/png=c.desktop;
 	/// winning over a system one of the same id.
 	#[test]
 	fn the_scan_reads_what_the_directories_hold() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-scan-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-scan-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(root.join("system")).expect("a directory");
 		std::fs::create_dir_all(root.join("local")).expect("a directory");
@@ -810,7 +810,7 @@ image/png=c.desktop;
 	/// local copy still wins, as it always did.
 	#[test]
 	fn a_hiding_local_copy_does_not_mask_the_installed_entry() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-shadow-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-shadow-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(root.join("system")).expect("a directory");
 		std::fs::create_dir_all(root.join("local")).expect("a directory");

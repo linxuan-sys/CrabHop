@@ -5,7 +5,7 @@
 //! while those agree with the file itself, and one this window makes is written the same way,
 //! atomically and for the owner only — a cache that is shared, not owned.
 //!
-//! Moved here from the legacy window (`duckfm/src/preview/thumb.rs`) as-is: the format is an
+//! Moved here from the legacy window as-is: the format is an
 //! interop contract, not an implementation.
 
 use std::{
@@ -96,7 +96,7 @@ impl Thumb {
 		}
 
 		let png = image::RgbaImage::from_pixel(1, 1, image::Rgba([ 0, 0, 0, 0 ]));
-		if let Some(bytes) = encode(&png, &[ ("Software", "duckfm") ]) {
+		if let Some(bytes) = encode(&png, &[ ("Software", "crabhop") ]) {
 			write_atomically(&cache_dir("fail").join(FILE).join(format!("{}.png", self.hash)), &bytes);
 		}
 	}
@@ -118,7 +118,7 @@ impl Thumb {
 			("Thumb::MTime", mtime.as_str()),
 			("Thumb::Size", size.as_str()),
 			("Thumb::Mimetype", self.mime),
-			("Software", "duckfm"),
+			("Software", "crabhop"),
 		];
 
 		for (box_side, dir) in BOXES {
@@ -158,7 +158,7 @@ fn shrink(image: &image::RgbaImage, box_side: u32) -> Option<image::RgbaImage> {
 }
 
 /// What our own `fail/` markers live under, so they can be told from another tool's.
-const FILE: &str = concat!("duckfm-", env!("CARGO_PKG_VERSION"));
+const FILE: &str = concat!("crabhop-", env!("CARGO_PKG_VERSION"));
 
 /// A PNG with the standard's metadata, written by the crate that owns the format.
 fn encode(image: &image::RgbaImage, texts: &[(&str, &str)]) -> Option<Vec<u8>> {
@@ -391,7 +391,7 @@ mod tests {
 			("Thumb::MTime", "1700000000"),
 			("Thumb::Size", "12345"),
 			("Thumb::Mimetype", "image/png"),
-			("Software", "duckfm"),
+			("Software", "crabhop"),
 		];
 
 		let encoded = encode(&image, &written).expect("the thumbnail encodes");

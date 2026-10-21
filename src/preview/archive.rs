@@ -412,7 +412,7 @@ mod tests {
 	/// the total stated from the central directory.
 	#[test]
 	fn a_zip_lists_its_tree_with_depths_and_sizes() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-p11-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-p11-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -437,7 +437,7 @@ mod tests {
 	/// A tar.zst lists the same way, through the decoder — and its total is not known up front.
 	#[test]
 	fn a_tar_zst_lists_through_its_decoder() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-p11-zst-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-p11-zst-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -468,7 +468,7 @@ mod tests {
 			71, 97, 153, 120, 187, 155, 187, 30, 7, 119, 3, 213, 16, 255, 23, 114, 69, 56, 80, 144, 70, 20, 99, 66,
 		];
 
-		let dir = std::env::temp_dir().join(format!("duckfm-native-bz2-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-bz2-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -487,7 +487,7 @@ mod tests {
 	/// A tar.xz lists through its decoder too, built at test time by the same crate that reads it.
 	#[test]
 	fn a_tar_xz_lists_through_its_decoder() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-xz-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-xz-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -529,7 +529,7 @@ mod tests {
 	/// row is the file's own name and the size column says nothing rather than a made-up number.
 	#[test]
 	fn a_single_stream_is_one_row() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-single-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-single-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -579,7 +579,7 @@ mod tests {
 	#[test]
 	fn the_tree_indents_a_level_at_a_time() {
 		let tokens = Tokens::MOCHA;
-		let dir = std::env::temp_dir().join(format!("duckfm-native-p11-tree-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-p11-tree-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -612,7 +612,7 @@ mod tests {
 	#[test]
 	fn the_first_level_opens_and_the_rest_stay_shut() {
 		let tokens = Tokens::MOCHA;
-		let dir = std::env::temp_dir().join(format!("duckfm-native-p28-fold-unit-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-p28-fold-unit-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -669,7 +669,7 @@ mod tests {
 		assert_eq!(family("x.gz"), Some(Family::Gz));
 
 		// the file need not exist for the name alone to answer — the read says why it stays shut
-		let missing = std::path::PathBuf::from("/tmp/duckfm-native-n2-never/shut.7z");
+		let missing = std::path::PathBuf::from("/tmp/crabhop-n2-never/shut.7z");
 		match read(&missing) {
 			Err(Fail::Unsupported(format)) => assert_eq!(format, "7z"),
 			other => panic!("a 7z is named, not read: {:?}", other.err()),
@@ -679,7 +679,7 @@ mod tests {
 	/// Junk is not an archive, whatever its name promised.
 	#[test]
 	fn junk_is_not_a_listing() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-p11-junk-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-p11-junk-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 

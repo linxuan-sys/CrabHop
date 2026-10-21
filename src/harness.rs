@@ -1,16 +1,16 @@
 //! The headless harness (P25): the window without a window. A replay or a screenshot is asked for
-//! by `DUCKFM_KEYS` / `DUCKFM_SHOT` as it always was — but instead of a real window, this builds
+//! by `CRABHOP_KEYS` / `CRABHOP_SHOT` as it always was — but instead of a real window, this builds
 //! its own egui context, hands it a synthetic `RawInput`, runs `App::frame` on it, tessellates on
-//! the CPU and paints into an offscreen texture with `egui_wgpu::Renderer`. `DUCKFM_SHOT`'s frames
+//! the CPU and paints into an offscreen texture with `egui_wgpu::Renderer`. `CRABHOP_SHOT`'s frames
 //! come out as PNGs through the app's own `request_screenshot` callbacks, completed from the
 //! read-back.
 //!
 //! Nothing here touches the user's session: no window, no surface, no compositor. RADV makes the
-//! device without one (the spike proved it), and `DUCKFM_HEADLESS=0` is the way back to a real
+//! device without one (the spike proved it), and `CRABHOP_HEADLESS=0` is the way back to a real
 //! window when a hand needs to see it.
 //!
 //! The sequence is the one the project's own acceptance already used: `cargo run` in a directory
-//! with `DUCKFM_KEYS="key j;key k;shot"` and `DUCKFM_SHOT=<prefix>` — the same steps, the same
+//! with `CRABHOP_KEYS="key j;key k;shot"` and `CRABHOP_SHOT=<prefix>` — the same steps, the same
 //! `Timing:` readings, the same `<prefix>-N.png` frames, and no window anywhere.
 
 use std::sync::Arc;
@@ -23,15 +23,15 @@ use crate::app::App;
 use crate::tokens::{Tokens, ROW_HEIGHT};
 
 /// Whether the headless path is the one to take: a replay is asked for, unless the caller says
-/// otherwise. A real window is then only for a person's own eyes (`DUCKFM_HEADLESS=0`).
+/// otherwise. A real window is then only for a person's own eyes (`CRABHOP_HEADLESS=0`).
 pub(crate) fn wanted() -> bool {
-	match std::env::var("DUCKFM_HEADLESS") {
+	match std::env::var("CRABHOP_HEADLESS") {
 		Ok(asked) => asked != "0",
-		Err(_) => std::env::var_os("DUCKFM_KEYS").is_some(),
+		Err(_) => std::env::var_os("CRABHOP_KEYS").is_some(),
 	}
 }
 
-/// The frame's own size, in points: `DUCKFM_WINDOW` when it is set, the same default a window gets.
+/// The frame's own size, in points: `CRABHOP_WINDOW` when it is set, the same default a window gets.
 fn size() -> [f32; 2] {
 	let size = crate::inner_size();
 
@@ -163,7 +163,7 @@ impl Session {
 	}
 
 	fn steps(&self) -> usize {
-		std::env::var("DUCKFM_KEYS").map(|keys| keys.split(';').filter(|s| !s.is_empty()).count()).unwrap_or(0)
+		std::env::var("CRABHOP_KEYS").map(|keys| keys.split(';').filter(|s| !s.is_empty()).count()).unwrap_or(0)
 	}
 
 	/// One frame: the app's own ui, then the picture, then whatever `request_screenshot` asked for.
@@ -407,7 +407,7 @@ impl Session {
 
 /// The replay steps, from the environment — the same corpus every acceptance run has used.
 fn seed() -> Vec<String> {
-	std::env::var("DUCKFM_KEYS")
+	std::env::var("CRABHOP_KEYS")
 		.map(|keys| keys.split(';').map(|step| step.trim().to_owned()).filter(|step| !step.is_empty()).collect())
 		.unwrap_or_default()
 }
@@ -434,7 +434,7 @@ pub(crate) fn device() -> (wgpu::Device, wgpu::Queue) {
 	}
 
 	block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-		label: Some("duckfm-harness"),
+		label: Some("crabhop-harness"),
 		required_features: wgpu::Features::empty(),
 		required_limits: wgpu::Limits::default(),
 		..Default::default()
@@ -468,7 +468,7 @@ mod tests {
 		// writes whatever a drag makes into a directory of its own (the person's own file stays out
 		// of the way of the tests, and the tests stay out of the way of it)
 		crate::config::config_dir_for_tests(
-			std::env::temp_dir().join(format!("duckfm-native-config-{}", std::process::id())).join("duckfm"),
+			std::env::temp_dir().join(format!("crabhop-config-{}", std::process::id())).join("crabhop"),
 		);
 
 		let (device, queue) = device();
@@ -549,7 +549,7 @@ mod tests {
 	/// the log carries a replay.
 	#[test]
 	fn a_zoom_moves_the_display_ratio_the_badge_shows() {
-		let at = std::env::temp_dir().join(format!("duckfm-native-zoom-{}.png", std::process::id()));
+		let at = std::env::temp_dir().join(format!("crabhop-zoom-{}.png", std::process::id()));
 		image::RgbaImage::from_pixel(320, 240, image::Rgba([ 40, 160, 60, 255 ]))
 			.save(&at)
 			.expect("the fixture encodes");
@@ -871,7 +871,7 @@ mod tests {
 #[test]
 fn the_parent_column_answers_the_mouse() {
 	// a sandbox: forty entries and the directory the test stands in
-	let root = std::env::temp_dir().join(format!("duckfm-native-parent-{}", std::process::id()));
+	let root = std::env::temp_dir().join(format!("crabhop-parent-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(root.join("inside")).expect("a sandbox");
 	for n in 0..40 {
@@ -1021,7 +1021,7 @@ fn space_toggles_the_selection_and_escape_clears_it() {
 /// and a held cut moves the bytes rather than copying them.
 #[test]
 fn the_global_ctrl_names_act_on_the_selection_or_the_cursor_row() {
-	let root = std::env::temp_dir().join(format!("duckfm-native-ctrl-{}", std::process::id()));
+	let root = std::env::temp_dir().join(format!("crabhop-ctrl-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(root.join("dst")).expect("a sandbox");
 	std::fs::write(root.join("a.txt"), b"a").expect("a file");
@@ -1093,7 +1093,7 @@ fn the_global_ctrl_names_act_on_the_selection_or_the_cursor_row() {
 /// the stack is nothing said.
 #[test]
 fn the_undo_takes_the_change_type_tasks_back() {
-	let root = std::env::temp_dir().join(format!("duckfm-native-undo-{}", std::process::id()));
+	let root = std::env::temp_dir().join(format!("crabhop-undo-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(root.join("sub")).expect("a sandbox");
 	std::fs::write(root.join("sub/a.txt"), b"a").expect("a file");
@@ -1199,7 +1199,7 @@ fn the_undo_takes_the_change_type_tasks_back() {
 #[test]
 fn a_click_on_the_parent_columns_directory_enters_it() {
 	// sandbox: root/{inside, sibling}/ and a loose file, standing in root/inside
-	let root = std::env::temp_dir().join(format!("duckfm-native-parent-go-{}", std::process::id()));
+	let root = std::env::temp_dir().join(format!("crabhop-parent-go-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(root.join("inside")).expect("a sandbox");
 	std::fs::create_dir_all(root.join("sibling")).expect("a sibling");
@@ -1281,7 +1281,7 @@ fn a_click_on_the_parent_columns_directory_enters_it() {
 fn the_clipboard_chords_are_heard_in_the_windows_own_events() {
 	// a sandbox with room under the cursor: the matrix walks it a row per panel, and a listing
 	// of five would saturate `j` and make the walk a false failure
-	let root = std::env::temp_dir().join(format!("duckfm-native-chords-{}", std::process::id()));
+	let root = std::env::temp_dir().join(format!("crabhop-chords-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(&root).expect("a sandbox");
 	for n in 0..12 {
@@ -1426,7 +1426,7 @@ fn the_clipboard_chords_are_heard_in_the_windows_own_events() {
 #[test]
 fn t_opens_the_cursor_row_in_a_terminal() {
 	// sandbox: a folder and a file beside it
-	let root = std::env::temp_dir().join(format!("duckfm-native-terminal-here-{}", std::process::id()));
+	let root = std::env::temp_dir().join(format!("crabhop-terminal-here-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(root.join("folder")).expect("a sandbox");
 	std::fs::write(root.join("note.txt"), b"n").expect("a file");
@@ -1485,7 +1485,7 @@ fn t_opens_the_cursor_row_in_a_terminal() {
 /// next phase). The `c` family has always gone through the same door; this is the yank's own.
 #[test]
 fn a_yank_also_reaches_the_system_clipboard() {
-	let root = std::env::temp_dir().join(format!("duckfm-native-yank-clip-{}", std::process::id()));
+	let root = std::env::temp_dir().join(format!("crabhop-yank-clip-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(&root).expect("a sandbox");
 	std::fs::write(root.join("a.txt"), b"a").expect("a file");
@@ -1552,7 +1552,7 @@ fn a_yank_also_reaches_the_system_clipboard() {
 /// their own ids.
 #[test]
 fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
-	let root = std::env::temp_dir().join(format!("duckfm-native-openwith-{}", std::process::id()));
+	let root = std::env::temp_dir().join(format!("crabhop-openwith-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&root);
 	std::fs::create_dir_all(&root).expect("a sandbox");
 	std::fs::write(root.join("note.txt"), b"n").expect("a text file");
@@ -1656,7 +1656,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	/// pointer lying over the menu's first row for the whole walk.
 	#[test]
 	fn the_open_with_row_opens_on_enter_with_the_pointer_lying_over_another_row() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-p36a-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p36a-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 		std::fs::write(root.join("note.txt"), b"n").expect("a text file");
@@ -1711,7 +1711,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	/// nobody over it, the very same wheel does move the list.
 	#[test]
 	fn the_wheel_walks_the_panel_and_never_the_list_behind() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-p36b-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p36b-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 		for i in 0..60 {
@@ -1798,7 +1798,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	#[test]
 	fn the_seek_keys_and_the_wheel_walk_a_document_preview() {
 		use std::io::Write as _;
-		let root = std::env::temp_dir().join(format!("duckfm-native-p37e-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p37e-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 
@@ -1878,7 +1878,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 
 	#[test]
 	fn the_o_key_opens_the_cursor_rows_menu() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-p36o-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p36o-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 		std::fs::write(root.join("note.txt"), b"n").expect("a text file");
@@ -1934,7 +1934,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	/// harness's dry switch records what the opener would have been handed, so nothing spawns.
 	#[test]
 	fn enter_opens_the_default_and_l_enters_the_directory() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-p37a-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p37a-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(root.join("sub")).expect("a sandbox");
 		std::fs::write(root.join("note.txt"), b"n").expect("a text file");
@@ -2009,7 +2009,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	/// and compares the states.
 	#[test]
 	fn the_open_with_row_opens_on_l_as_well() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-p37l-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p37l-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 		std::fs::write(root.join("note.txt"), b"n").expect("a text file");
@@ -2057,7 +2057,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	/// whatever the panel says is clipped to it: nothing is drawn outside the rect.
 	#[test]
 	fn the_applications_panel_keeps_its_floors_and_draws_inside_them() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-p37f-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p37f-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 		std::fs::write(root.join("note.txt"), b"n").expect("a text file");
@@ -2146,7 +2146,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	/// machine's real nvim, and the dry switch hears the chain so no window opens.
 	#[test]
 	fn the_default_open_wraps_a_terminal_handler_in_the_chain() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-p37t-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p37t-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 		std::fs::write(root.join("note.dfmx"), b"x").expect("a file of an unregistered type");
@@ -2194,7 +2194,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 /// preferences byte-identical, Ctrl+Enter gains the entry's own id.
 	#[test]
 	fn ctrl_enter_writes_the_default_and_enter_leaves_it_alone() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-p38b-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p38b-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 		std::fs::write(root.join("note.txt"), b"n").expect("a text file");
@@ -2284,7 +2284,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	#[test]
 	fn the_scroll_contract_matrix_holds_for_every_kind_and_way() {
 		use std::io::Write as _;
-		let root = std::env::temp_dir().join(format!("duckfm-native-p38c-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p38c-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 
@@ -2501,7 +2501,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 /// very next open, no restart. `Ctrl+Enter`'s merge lands on the same file, whole and civil.
 	#[test]
 	fn the_mimeapps_ledger_is_read_live_and_the_system_stands_behind_it() {
-		let root = std::env::temp_dir().join(format!("duckfm-native-p38l-{}", std::process::id()));
+		let root = std::env::temp_dir().join(format!("crabhop-p38l-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
 		std::fs::create_dir_all(&root).expect("a sandbox");
 		std::fs::write(root.join("note.txt"), b"n").expect("a text file");
@@ -2520,7 +2520,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		// system's — never a shared path another test reads, and outside the sandbox's own
 		// listing, so the row the walk opens is always the note itself (a directory here would
 		// sort first and the walk would open its folder menu instead)
-		let ledgers = std::env::temp_dir().join(format!("duckfm-native-p38l-ledgers-{}", std::process::id()));
+		let ledgers = std::env::temp_dir().join(format!("crabhop-p38l-ledgers-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&ledgers);
 		std::fs::create_dir_all(&ledgers).expect("the ledgers' own directory");
 		let user = ledgers.join("mimeapps.list");
@@ -2636,7 +2636,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	#[test]
 	fn a_scrolled_picture_never_reaches_the_tab_bar() {
 		// a tall, unmistakably red picture of the test's own
-		let at = std::env::temp_dir().join(format!("duckfm-native-tall-{}.png", std::process::id()));
+		let at = std::env::temp_dir().join(format!("crabhop-tall-{}.png", std::process::id()));
 		image::RgbaImage::from_pixel(120, 900, image::Rgba([ 250, 20, 20, 255 ]))
 			.save(&at)
 			.expect("the fixture encodes");
@@ -2874,7 +2874,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	/// is bare, where six lines of words used to be.
 	#[test]
 	fn no_words_stand_under_the_picture_in_the_column() {
-		let at = std::env::temp_dir().join(format!("duckfm-native-p28-notext-{}.png", std::process::id()));
+		let at = std::env::temp_dir().join(format!("crabhop-p28-notext-{}.png", std::process::id()));
 		image::RgbaImage::from_pixel(200, 120, image::Rgba([ 250, 20, 20, 255 ]))
 			.save(&at)
 			.expect("the fixture encodes");
@@ -2926,7 +2926,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	/// Esc backing out one page at a time.
 	#[test]
 	fn the_rows_menu_walks_its_pages() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-menu-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-menu-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("sub")).expect("a directory");
 		let at = dir.join("a.png");
@@ -3015,7 +3015,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let mut session = session(Vec::new());
 		assert!(session.wait_for_list(2, 200), "the listing has to land first");
 
-		session.app.open_failed_for_tests(std::path::PathBuf::from("/tmp/duckfm-native-n2-never/a.zzz"));
+		session.app.open_failed_for_tests(std::path::PathBuf::from("/tmp/crabhop-n2-never/a.zzz"));
 
 		let mut said = None;
 		for _ in 0..60 {
@@ -3053,7 +3053,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	fn an_archive_folder_opens_under_the_pointer() {
 		use std::io::Write;
 
-		let dir = std::env::temp_dir().join(format!("duckfm-native-p28-fold-harness-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-p28-fold-harness-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a directory");
 
@@ -3115,7 +3115,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	/// of its own for as long as it runs.
 	#[test]
 	fn the_index_saves_what_the_box_holds_and_not_its_parent() {
-		let tmp = std::env::temp_dir().join(format!("duckfm-native-index-{}", std::process::id()));
+		let tmp = std::env::temp_dir().join(format!("crabhop-index-{}", std::process::id()));
 		crate::config::state_dir_for_tests(tmp.clone());
 
 		let open = |session: &mut Session| {
@@ -3141,7 +3141,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let mut held = session(Vec::new());
 		open(&mut held);
 		assert!(held.app.fuzzy_query_for_tests().is_some(), "the index panel opened");
-		let dir = std::env::temp_dir().join(format!("duckfm-native-index-files-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-index-files-{}", std::process::id()));
 		std::fs::create_dir_all(&dir).expect("a dir of the test's own");
 		std::fs::write(dir.join("note.txt"), b"x").expect("a file of the test's own");
 		// the box takes the keyboard only after a second i (P33⑬): the typing goes to the list first
@@ -3378,7 +3378,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	/// folder that was right-clicked. The file comes from one level up, so the two are told apart.
 	#[test]
 	fn the_menu_pastes_beside_the_folder_it_was_opened_on() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-menu-paste-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-menu-paste-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("dst").join("sub")).expect("a sandbox of the test's own");
 		std::fs::write(dir.join("src.txt"), b"x").expect("a file of the test's own");
@@ -3436,7 +3436,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	/// the same `yank` the `y` key does, whose targets are the selection when one is held.
 	#[test]
 	fn the_menu_copies_the_selection_when_one_is_held() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-menu-copy-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-menu-copy-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("two")).expect("a sandbox of the test's own");
 		std::fs::write(dir.join("two").join("a.txt"), b"x").expect("a file of the test's own");
@@ -3579,7 +3579,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		];
 		let names: Vec<String> = exts.iter().enumerate().map(|(i, ext)| format!("a{i:02}.{ext}")).collect();
 
-		let dir = std::env::temp_dir().join(format!("duckfm-native-icon-name-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-icon-name-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).expect("a sandbox of the test's own");
 		for name in &names {
@@ -3662,7 +3662,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		// the list must be in it too
 		let mut long: Vec<String> = long;
 		long.sort();
-		let dir2 = std::env::temp_dir().join(format!("duckfm-native-icon-long-{}", std::process::id()));
+		let dir2 = std::env::temp_dir().join(format!("crabhop-icon-long-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir2);
 		std::fs::create_dir_all(&dir2).expect("a second sandbox of the test's own");
 		for name in &long {

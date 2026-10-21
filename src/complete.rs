@@ -97,7 +97,7 @@ mod tests {
 	/// slash, and only what carries on the name is listed.
 	#[test]
 	fn path_candidates_read_the_directory_the_token_points_at() {
-		let dir = std::env::temp_dir().join(format!("duckfm-native-complete-{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("crabhop-complete-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(dir.join("docs/deep")).expect("a directory");
 		std::fs::write(dir.join("doc.txt"), b"x").expect("a file");
