@@ -47,6 +47,17 @@ done
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$data/applications" 2>/dev/null || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -qtf "$data/icons/hicolor" 2>/dev/null || true
 
+# The examples, so a person has something to read and copy before writing their own: the factory
+# key table (the same 94 rows the help panel shows) and a commented config. Never overwrite a file
+# that is already there — those are the person's edits, not ours.
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/crabhop"
+mkdir -p "$conf"
+for pair in "keymap-default.toml:keymap.toml.example" "config.example.toml:config.toml.example"; do
+	src="$here/${pair%%:*}"
+	dst="$conf/${pair##*:}"
+	[ -f "$src" ] && [ ! -e "$dst" ] && install -m644 "$src" "$dst"
+done
+
 printf 'CrabHop installed:\n  %s/crabhop\n  %s/applications/crabhop.desktop\n' "$bindir" "$data"
 case ":${PATH}:" in *":$bindir:"*) ;; *) echo "  (note: $bindir is not on PATH — the menu entry still works)" ;; esac
 echo "  start it from your application menu, or run: $bindir/crabhop"

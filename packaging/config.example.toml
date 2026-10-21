@@ -1,0 +1,9 @@
+# crabhop 配置示例（复制成 ~/.config/crabhop/config.toml 后按需改）
+#
+# 只有 [columns] 一段：三列的宽度比例，程序拖动列边界时会自动改写。
+# 缺的字段用出厂值（1 : 4 : 3），不写这个文件就永远是出厂值。
+
+[columns]
+parent  = 1.0   # 左列（父目录）
+current = 4.0   # 中列（当前目录）
+preview = 3.0   # 右列（预览）

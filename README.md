@@ -91,6 +91,11 @@ cd crabhop-1.0.0 && ./uninstall.sh     # 撤掉 ~/.local 里的程序、菜单�
 
 ## 配置
 
+安装脚本会在 `~/.config/crabhop/` 放两份**示例**（已存在则不覆盖）：
+
+- `keymap.toml.example` —— 完整 94 行键位表，抄成 `keymap.toml` 改
+- `config.toml.example` —— 带注释的三列比例示例，抄成 `config.toml` 改
+
 出厂文件在仓库里，用户文件在 `~/.config/crabhop/`，后者覆盖前者：
 
 | 文件 | 覆盖什么 |
@@ -221,6 +226,10 @@ Configuration and state are deliberately left alone: `~/.config/crabhop/` (confi
 rebuilt on demand).
 
 ## Configuration
+
+The installer drops two **examples** into `~/.config/crabhop/` (never overwriting anything already
+there): `keymap.toml.example`, the full 94-row key table to copy into `keymap.toml`, and
+`config.toml.example`, a commented column-share file to copy into `config.toml`.
 
 Factory files live in the repository, the person's in `~/.config/crabhop/`, the latter overriding
 the former: `config.toml` (column shares), `keymap.toml` (the whole key table), and the desktop's
