@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=CrabHop
+GenericName=File Manager
+Comment=Native, keyboard-first file manager / 原生键盘优先的文件管理器
+Exec=crabhop %F
+Icon=crabhop
+Terminal=false
+Categories=System;FileManager;Utility;
+MimeType=inode/directory;
+Keywords=crabhop;file;manager;files;
+StartupWMClass=crabhop

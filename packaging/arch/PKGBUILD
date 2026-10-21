@@ -1,0 +1,75 @@
+# Maintainer: linxuan-sys <icefever@qq.com>
+pkgname=crabhop
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Native, keyboard-first file manager — three columns, a preview stack, and a headless harness'
+# x86_64 only: the pinned PDFium tarball below is linux-x64; an aarch64 build would need its own
+# fetch (scripts/fetch-pdfium.sh takes the same pinned URL) and its own sha256sums entry.
+arch=('x86_64')
+url='https://github.com/linxuan-sys/CrabHop'
+license=('MIT')
+depends=(
+	# The window's backends are loaded at runtime, not linked (ldd on the release binary shows
+	# little more than libc): winit dlopens them, both X11 and Wayland being compiled in.
+	'libx11'
+	'libxcb'
+	'libxcursor'
+	'libxi'
+	'libxrandr'
+	'libxkbcommon'
+	'libxkbcommon-x11'
+	'wayland'
+	# wgpu's own loading: EGL for the GL fallback, and the Vulkan loader — the ICD itself comes
+	# from a driver package (mesa's vulkan-radeon/vulkan-intel, nvidia-utils, …), which the
+	# `vulkan-driver` virtual covers without picking a vendor.
+	'libglvnd'
+	'vulkan-icd-loader'
+	'vulkan-driver'
+)
+optdepends=(
+	'ffmpeg: video previews'
+	'ffmpegthumbnailer: faster video thumbnails'
+)
+makedepends=('cargo' 'rust')
+# The release tarball is the pinned tag; the PDFium tarball is the very one
+# scripts/fetch-pdfium.sh fetches, same sha256 — unpacked in prepare, so the build itself needs
+# no network of its own. (The first sum is SKIP until the tag is pushed; fill it from the
+# release tarball before submitting to the AUR.)
+source=("$pkgname-$pkgver.tar.gz::https://github.com/linxuan-sys/CrabHop/archive/v$pkgver.tar.gz"
+	"pdfium-linux-x64-static.tgz::https://github.com/kognitos/pdfium-static/releases/download/chromium%2F7809/pdfium-linux-x64-static.tgz")
+sha256sums=('SKIP'
+	'13908bb2d40a6e017c4c5a6a7baecc6efd7b1c30392c8a79e80072d2b48b18eb')
+
+prepare() {
+	# where build.rs and .cargo/config.toml look for the static library
+	mkdir -p "$srcdir/$pkgname-$pkgver/libs/pdfium"
+	bsdtar -xzf "$srcdir/pdfium-linux-x64-static.tgz" -C "$srcdir/$pkgname-$pkgver/libs/pdfium"
+}
+
+build() {
+	cd "$pkgname-$pkgver"
+	# .cargo/config.toml is only read from the crate's own directory; the path is handed over
+	# anyway, so the build is the same wherever it stands
+	export PDFIUM_STATIC_LIB_PATH="$PWD/libs/pdfium/lib"
+	cargo build --release --locked
+}
+
+check() {
+	cd "$pkgname-$pkgver"
+	export PDFIUM_STATIC_LIB_PATH="$PWD/libs/pdfium/lib"
+	cargo test --release --locked
+}
+
+package() {
+	cd "$pkgname-$pkgver"
+	install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+	install -Dm644 packaging/crabhop.desktop "$pkgdir/usr/share/applications/crabhop.desktop"
+	for size in 512x512 256x256 128x128; do
+		install -Dm644 "assets/icons/hicolor/$size/apps/crabhop.png" \
+			"$pkgdir/usr/share/icons/hicolor/$size/apps/crabhop.png"
+	done
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+	install -Dm644 NOTICE "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
+	install -Dm644 LICENSE-ICONS "$pkgdir/usr/share/licenses/$pkgname/LICENSE-ICONS"
+	install -Dm644 assets/fonts/LICENSE-MapleMono.txt "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MapleMono.txt"
+}
