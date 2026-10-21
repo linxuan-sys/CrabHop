@@ -44,16 +44,29 @@ fn main() -> eframe::Result {
 		return Ok(());
 	}
 
+	// the window's own icon (P43②): the taskbar and the alt-tab list wear the crab; a broken
+	// image leaves the window without one rather than refusing to open
+	let mut viewport = eframe::egui::ViewportBuilder::default().with_title("CrabHop").with_inner_size(inner_size());
+	if let Some(icon) = window_icon() {
+		viewport = viewport.with_icon(icon);
+	}
+
 	eframe::run_native(
 		"crabhop",
-		eframe::NativeOptions {
-			viewport: eframe::egui::ViewportBuilder::default()
-				.with_title("CrabHop")
-				.with_inner_size(inner_size()),
-			..Default::default()
-		},
+		eframe::NativeOptions { viewport, ..Default::default() },
 		Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
 	)
+}
+
+/// The window's own icon (P43②): the 256px hicolor image, embedded whole — the same file the
+/// packaging installs, so what a taskbar shows and what a desktop entry names cannot drift.
+/// Decoded once at startup; `None` when the bytes are not an image, which is nobody's crash.
+pub(crate) fn window_icon() -> Option<eframe::egui::IconData> {
+	let bytes = include_bytes!("../assets/icons/hicolor/256x256/apps/crabhop.png");
+	let image = image::load_from_memory(bytes).ok()?.to_rgba8();
+	let (width, height) = image.dimensions();
+
+	Some(eframe::egui::IconData { rgba: image.into_raw(), width, height })
 }
 
 /// The window's own size, unless `CRABHOP_WINDOW=WxH` asks for another: the acceptance's narrow
@@ -68,4 +81,18 @@ pub(crate) fn inner_size() -> [f32; 2] {
 	};
 
 	[ w.clamp(320.0, 4096.0), h.clamp(240.0, 4096.0) ]
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// P43②: the window's icon is really there and really decodes — the very path the startup
+	/// walks, without a window. The pixels are a taskbar's business; this is the loading's.
+	#[test]
+	fn the_window_icon_decodes() {
+		let icon = window_icon().expect("the embedded icon decodes");
+		assert_eq!((icon.width, icon.height), (256, 256), "the hicolor 256, the one the packaging installs");
+		assert_eq!(icon.rgba.len(), 256 * 256 * 4, "RGBA, whole");
+	}
 }
