@@ -27,6 +27,12 @@ PDF 预览静态链接 PDFium；用 `scripts/fetch-pdfium.sh` 取一次（落在
 	CRABHOP_KEYS="key j;key j;shot" CRABHOP_SHOT=/tmp/crabhop cargo run
 	tools/run-crabhop.sh /某个目录 /tmp/crabhop   # 同上，任何位置可跑
 
+## 安装
+
+- **AUR**：`yay -S crabhop`（打包在 `packaging/arch/PKGBUILD`）。
+- **发布 tar 包**：解包 `crabhop-<版本>-x86_64.tar.gz`，把 `crabhop` 放进 `PATH`。
+- **源码自建**：`cargo build --release`——先按上面「构建」取好 PDFium。
+
 ## 社区欢迎件
 
 配置面刻意做成两层——仓内出厂文件，被 `~/.config/crabhop/config.toml` 与

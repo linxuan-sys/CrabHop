@@ -29,6 +29,12 @@ read it). A replay or a screenshot runs headless, no window:
 	CRABHOP_KEYS="key j;key j;shot" CRABHOP_SHOT=/tmp/crabhop cargo run
 	tools/run-crabhop.sh /a/directory /tmp/crabhop   # the same, from anywhere
 
+## Install
+
+- **From the AUR**: `yay -S crabhop` (the packaging lives in `packaging/arch/PKGBUILD`).
+- **From a release tarball**: unpack `crabhop-<version>-x86_64.tar.gz` and put `crabhop` on your `PATH`.
+- **From source**: `cargo build --release` — fetch PDFium first, as **Build** above says.
+
 ## Community-welcome items
 
 The configuration surface is deliberately two-layered — the factory's own files here, overridden
