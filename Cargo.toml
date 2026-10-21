@@ -1,0 +1,87 @@
+[package]
+name        = "duckfm-native"
+description = "Duckfm, rewritten natively: the window owns its state and draws its own list"
+version     = "26.9.1"
+edition     = "2024"
+license     = "MIT"
+rust-version = "1.95.0"
+
+[[bin]]
+name = "duckfm-native"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.37.0", default-features = false, features = [ "wgpu", "wayland", "x11", "clipboard", "default_fonts", "system_fonts" ] }
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
+ignore = "0.4.33"
+nucleo-matcher = "0.3.1"
+serde  = { version = "1.0.229", features = [ "derive" ] }
+serde_json = "1.0.151"
+tar    = "0.4.44"
+tokio  = { version = "1.53.1", features = [ "full" ] }
+toml   = "1.1.4"
+trash  = { version = "5.2.6", features = [ "chrono" ] }
+zip    = { version = "8.6", default-features = false, features = [ "deflate" ] }
+zstd   = { version = "0.14.3", default-features = false }
+
+# The image preview: decode with the workspace's `image` features, resample with the same crate
+# the legacy window used, and write the freedesktop cache with png's own tEXt chunks.
+image             = { version = "0.25.10", default-features = false, features = [ "bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp" ] }
+fast_image_resize = { version = "6.1", default-features = false, features = [ "std" ] }
+png               = "0.18"
+
+# The document extractors, moved here from the legacy window: calamine's default features are
+# none — its formats are built in — and zip/quick-xml are the crates the fixture tests use too.
+calamine  = { version = "0.36.1", default-features = false }
+quick-xml = "0.42.0"
+
+# PDF: pdfium-render binds the statically linked library that build.rs links (see build.rs and
+# PDFIUM_STATIC_LIB_PATH); pdf-extract is the text fallback chain.
+pdfium-render = { version = "0.9.4", default-features = false, features = [ "static", "thread_safe", "pdfium_7763" ] }
+pdf-extract   = "0.12.1"
+
+# The directory watcher (P18): the workspace's own `notify`, so a file another program makes in
+# the directory on show appears without a restart.
+notify = { version = "8.2.0", default-features = false }
+
+# Devices (P17): UDisks2 straight over the system bus, blocking API on a worker thread — no
+# subprocess, no `gio mount`, no shell. zbus pulls a pure-Rust async runtime (async-io) underneath.
+zbus = { version = "5", features = [ "blocking-api" ] }
+# the drawer's × kills a command's own process group (N3)
+libc = "0.2.189"
+
+# Archives: the same crates the packer writes with read the listings — zip through `zip`, tar
+# through `tar`, and the compressed tars through flate2's pure-Rust decoder and zstd. flate2 is
+# already in the lock through zip; declaring it here is what lets the reader name it.
+flate2 = "1.1"
+
+# The clipboard exchange with file managers (P35④ phase two): `text/uri-list` and the GNOME /
+# KDE flavors, so Nautilus and Thunar can paste the window's targets as files. Pure Rust by
+# design (wayland-client underneath), no external binary; already in the workspace's lock
+# through arboard, so declaring it here adds no package to the tree.
+wl-clipboard-rs = "0.9"
+
+# Markdown: the spec's own route (§3.8) — pulldown-cmark to events, laid out by hand.
+pulldown-cmark = { version = "0.13", default-features = false }
+
+# Syntax highlighting. Deliberately not the workspace's syntect: the workspace's is built with
+# `regex-onig`, and onig is an Oniguruma C library this project bans (the task's rule). The
+# `default-fancy` backend is pure Rust (fancy-regex), so no C toolchain is involved.
+syntect = { version = "5.3.0", default-features = false, features = [ "default-fancy" ] }
+bzip2-rs = "0.1.2"
+lzma-rs = "0.3.0"
+
+[dev-dependencies]
+# The PDF fixtures are built with lopdf itself, so the tests carry no sample files — the same
+# arrangement the legacy window's tests had.
+lopdf = "0.45.0"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+codegen-units = 1
+lto           = true
+panic         = "abort"
+strip         = true

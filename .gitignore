@@ -1,0 +1,4 @@
+target/
+
+# the fetched pdfium static library (scripts/fetch-pdfium.sh)
+duckfm/libs/

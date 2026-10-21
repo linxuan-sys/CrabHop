@@ -1,0 +1,4 @@
+# duckfm renders PDF pages with a statically linked PDFium. scripts/fetch-pdfium.sh puts the
+# library in duckfm/libs/pdfium (ignored by git); this is where pdfium-render and build.rs look
+# for it. The path is relative to this file.
+PDFIUM_STATIC_LIB_PATH = { value = "duckfm/libs/pdfium/lib", relative = true }

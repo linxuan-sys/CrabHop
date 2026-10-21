@@ -1,0 +1,521 @@
+# duckfm 键位表（duckfm 自有格式，非 yazi 的 keymap.toml）
+#
+#   on    一个键写作字符串（"h"、"<Enter>"、">"、"<Space>"）；和弦写作数组（[ "g", "h" ]）
+#   run   动词：duckfm 动作名。带参数的沿用 yazi 的写法（`seek 5`、`cd ~`、`rename --cursor=start`、
+#         `enter --bypass`、`plugin gvfs -- select-then-mount --jump` 等），参数语义见 keys.rs::action_of
+#   desc  中文说明，帮助浮层（~ / F1）与和弦提示浮层都读它
+#
+# 优先级：按本表顺序，第一个匹配的绑定胜出。一个键既是单键绑定又是更长和弦的开头时，
+# 单键在前的写法会让和弦不可达 —— 想留和弦就要把它写在前面。
+#
+# 单键被前面的和弦首键遮住的（`r`、`p`、`o`、`G`：它们的 `r …`/`p …`/`o …`/`G m` 和弦写在前面，
+# yazi 自己的表也是这样）没有搬 —— 按 `r` 之类的键请按和弦的写法（`r r` 等），浮层会提示续键。
+#
+# 用户覆盖：$HOME/.config/duckfm/keymap.toml。有且能解析出绑定时整表取代本文件；
+# 文件为空/整表解析不出绑定时本文件继续生效（并在 stderr 说一句）。
+#
+# 本表 = 用户 P21 键位表（唯一法典）。已落地的行在这里；表里本窗口尚未实现的功能
+# （? 交互式帮助、/ 查找 + n/N、m p/o 列开关、,b/,B、L 链接面板、M 面板内键、
+# 全局 Ctrl+A 等）待后续节次落地后并入，见 report 的「P21 偏离表 / 待做」。
+
+
+[[keys]]
+on   = [ "g", "h" ]
+run  = "cd ~"
+desc = "主目录"
+
+[[keys]]
+on   = [ "g", "a" ]
+run  = "cd ~/Desktop/"
+desc = "桌面"
+
+[[keys]]
+on   = [ "g", "d" ]
+run  = "cd ~/Downloads/"
+desc = "下载"
+
+[[keys]]
+on   = [ "g", "p" ]
+run  = "cd ~/Pictures/"
+desc = "图片"
+
+[[keys]]
+on   = [ "g", "v" ]
+run  = "cd ~/Videos/"
+desc = "视频"
+
+[[keys]]
+on   = [ "g", "m" ]
+run  = "cd ~/Music/"
+desc = "音乐"
+
+[[keys]]
+on   = [ "g", "w" ]
+run  = "cd ~/Documents/"
+desc = "文档"
+
+[[keys]]
+on   = [ "g", "u" ]
+run  = "cd ~/Public/"
+desc = "公共目录"
+
+[[keys]]
+on   = [ "g", "T" ]
+run  = "cd ~/Templates/"
+desc = "模板"
+
+[[keys]]
+on   = [ "g", "c" ]
+run  = "cd ~/.config/"
+desc = "~/.config 目录"
+
+[[keys]]
+on   = [ "g", "l" ]
+run  = "cd ~/.local/"
+desc = "~/.local 目录"
+
+[[keys]]
+on   = [ "g", "t" ]
+run  = "plugin trash"
+desc = "回收站"
+
+[[keys]]
+on   = [ "g", "<Space>" ]
+run  = "cd --interactive"
+desc = "交互式目录"
+
+[[keys]]
+on   = [ "g", "f" ]
+run  = "symlinks"
+desc = "只显示符号链接"
+
+[[keys]]
+on   = [ "g", "g" ]
+run  = "arrow top"
+desc = "跳到顶部"
+
+[[keys]]
+on   = [ "g", "b" ]
+run  = "arrow bot"
+desc = "跳到底部"
+
+[[keys]]
+on   = "M"
+run  = "plugin mount"
+desc = "挂载设备面板"
+
+[[keys]]
+on   = "i"
+run  = "index"
+desc = "索引面板（i 再按跳入路径输入框）"
+
+[[keys]]
+on   = [ "c", "c" ]
+run  = "copy path"
+desc = "复制文件路径"
+
+[[keys]]
+on   = [ "c", "d" ]
+run  = "copy dirname"
+desc = "复制目录路径"
+
+[[keys]]
+on   = [ "c", "f" ]
+run  = "copy filename"
+desc = "复制文件名"
+
+[[keys]]
+on   = [ "c", "C" ]
+run  = "copy url"
+desc = "复制文件 URL"
+
+[[keys]]
+on   = [ "c", "D" ]
+run  = "copy dirurl"
+desc = "复制目录 URL"
+
+[[keys]]
+on   = "/"
+run  = "find --smart"
+desc = "智能查找（列表高亮，n/N 跳转）"
+
+[[keys]]
+on   = "n"
+run  = "find_arrow"
+desc = "下一个匹配项"
+
+[[keys]]
+on   = "N"
+run  = "find_arrow --previous"
+desc = "上一个匹配项"
+
+[[keys]]
+on   = "<Tab>"
+run  = "spot"
+desc = "信息面板（类型/大小/所有者/权限/时间，中文详写）"
+
+[[keys]]
+on   = "f"
+run  = "filter --smart"
+desc = "智能过滤"
+
+[[keys]]
+on   = "?"
+run  = "help"
+desc = "快捷键列表（交互式：浏览/搜索/回车执行）"
+
+[[keys]]
+on   = "r"
+run  = "rename --cursor=before_ext"
+desc = "重命名（同双击）"
+
+[[keys]]
+on   = "d"
+run  = "remove"
+desc = "移动到回收站"
+
+[[keys]]
+on   = "D"
+run  = "remove --permanently"
+desc = "永久删除"
+
+[[keys]]
+on   = "a"
+run  = "create"
+desc = "创建（带后缀=文件，不带=目录）"
+
+[[keys]]
+on   = "A"
+run  = "bulk_create"
+desc = "批量创建（一行一个）"
+
+[[keys]]
+on   = "q"
+run  = "quit"
+desc = "退出程序"
+
+[[keys]]
+on   = [ "m", "." ]
+run  = "hidden toggle"
+desc = "切换隐藏文件显示"
+
+[[keys]]
+on   = [ "m", "m" ]
+run  = "column mtime"
+desc = "切换修改时间列"
+
+[[keys]]
+on   = [ "m", "n" ]
+run  = "reset columns"
+desc = "复位列（大小 + 修改时间）"
+
+[[keys]]
+on   = [ "m", "p" ]
+run  = "column permissions"
+desc = "切换权限列"
+
+[[keys]]
+on   = [ "m", "b" ]
+run  = "column btime"
+desc = "切换创建时间列"
+
+[[keys]]
+on   = [ "m", "O" ]
+run  = "column owner"
+desc = "切换所有者列（`o` 让位给菜单键后的大小写移位）"
+
+[[keys]]
+on   = [ ",", "m" ]
+run  = [ "sort mtime --reverse=no", "show mtime" ]
+desc = "按修改时间正序"
+
+[[keys]]
+on   = [ ",", "M" ]
+run  = [ "sort mtime --reverse=yes", "show mtime" ]
+desc = "按修改时间倒序"
+
+[[keys]]
+on   = [ ",", "b" ]
+run  = [ "sort btime --reverse=no", "show btime" ]
+desc = "按创建时间正序（并显示时间）"
+
+[[keys]]
+on   = [ ",", "B" ]
+run  = [ "sort btime --reverse=yes", "show btime" ]
+desc = "按创建时间倒序（并显示时间）"
+
+[[keys]]
+on   = [ ",", "a" ]
+run  = "sort alphabetical --reverse=no"
+desc = "按字母正序"
+
+[[keys]]
+on   = [ ",", "A" ]
+run  = "sort alphabetical --reverse=yes"
+desc = "按字母倒序"
+
+[[keys]]
+on   = [ ",", "n" ]
+run  = "sort natural --reverse=no"
+desc = "自然排序正序"
+
+[[keys]]
+on   = [ ",", "N" ]
+run  = "sort natural --reverse=yes"
+desc = "自然排序倒序"
+
+[[keys]]
+on   = [ ",", "s" ]
+run  = "sort size --reverse=no"
+desc = "按大小正序"
+
+[[keys]]
+on   = [ ",", "S" ]
+run  = "sort size --reverse=yes"
+desc = "按大小倒序"
+
+[[keys]]
+on   = [ "t", "t" ]
+run  = "tab_create --current"
+desc = "新建标签页（当前目录）"
+
+[[keys]]
+on   = [ "t", "q" ]
+run  = "tab_close"
+desc = "关闭当前标签页"
+
+[[keys]]
+on   = "1"
+run  = "tab_switch 0"
+desc = "第 1 个标签页"
+
+[[keys]]
+on   = "2"
+run  = "tab_switch 1"
+desc = "第 2 个标签页"
+
+[[keys]]
+on   = "3"
+run  = "tab_switch 2"
+desc = "第 3 个标签页"
+
+[[keys]]
+on   = "4"
+run  = "tab_switch 3"
+desc = "第 4 个标签页"
+
+[[keys]]
+on   = "5"
+run  = "tab_switch 4"
+desc = "第 5 个标签页"
+
+[[keys]]
+on   = "6"
+run  = "tab_switch 5"
+desc = "第 6 个标签页"
+
+[[keys]]
+on   = "7"
+run  = "tab_switch 6"
+desc = "第 7 个标签页"
+
+[[keys]]
+on   = "8"
+run  = "tab_switch 7"
+desc = "第 8 个标签页"
+
+[[keys]]
+on   = "9"
+run  = "tab_switch 8"
+desc = "第 9 个标签页"
+
+[[keys]]
+on   = "0"
+run  = "tab_switch 9"
+desc = "第 10 个标签页"
+
+[[keys]]
+on   = "-"
+run  = "tab_switch -1 --relative"
+desc = "上一个标签页"
+
+[[keys]]
+on   = "="
+run  = "tab_switch 1 --relative"
+desc = "下一个标签页"
+
+[[keys]]
+on   = "["
+run  = "tab_swap -1"
+desc = "与上一个标签页交换位置"
+
+[[keys]]
+on   = "]"
+run  = "tab_swap 1"
+desc = "与下一个标签页交换位置"
+
+[[keys]]
+on   = "k"
+run  = "arrow prev"
+desc = "上一个文件"
+
+[[keys]]
+on   = "<Up>"
+run  = "arrow prev"
+desc = "上一个文件"
+
+[[keys]]
+on   = "j"
+run  = "arrow next"
+desc = "下一个文件"
+
+[[keys]]
+on   = "<Down>"
+run  = "arrow next"
+desc = "下一个文件"
+
+[[keys]]
+on   = "J"
+run  = "seek 5"
+desc = "预览向下滚动 5 行（文本/文档/表格）"
+
+[[keys]]
+on   = "K"
+run  = "seek -5"
+desc = "预览向上滚动 5 行（文本/文档/表格）"
+
+[[keys]]
+on   = "<C-u>"
+run  = "half-up"
+desc = "向上移动半页"
+
+[[keys]]
+on   = "<C-d>"
+run  = "half-down"
+desc = "向下移动半页"
+
+[[keys]]
+on   = "<C-b>"
+run  = "page-up"
+desc = "向上移动一页"
+
+[[keys]]
+on   = "<C-f>"
+run  = "page-down"
+desc = "向下移动一页"
+
+[[keys]]
+on   = "<PageUp>"
+run  = "half-up"
+desc = "向上移动半页"
+
+[[keys]]
+on   = "<PageDown>"
+run  = "half-down"
+desc = "向下移动半页"
+
+[[keys]]
+on   = "<S-PageUp>"
+run  = "page-up"
+desc = "向上移动一页"
+
+[[keys]]
+on   = "<S-PageDown>"
+run  = "page-down"
+desc = "向下移动一页"
+
+[[keys]]
+on   = "G"
+run  = "arrow bot"
+desc = "跳到列表底部"
+
+[[keys]]
+on   = "<End>"
+run  = "arrow bot"
+desc = "跳到列表底部"
+
+[[keys]]
+on   = "<Home>"
+run  = "arrow top"
+desc = "跳到列表顶部"
+
+[[keys]]
+on   = "h"
+run  = "leave"
+desc = "返回上级目录"
+
+[[keys]]
+on   = "<Left>"
+run  = "leave"
+desc = "返回上级目录"
+
+[[keys]]
+on   = "l"
+run  = "enter --dir-only"
+desc = "进入子目录"
+
+[[keys]]
+on   = "<Right>"
+run  = "enter --bypass"
+desc = "智能进入（单子目录链穿透）"
+
+[[keys]]
+on   = "<Enter>"
+run  = "open"
+desc = "用默认程序打开（文件与目录同）"
+
+[[keys]]
+on   = "y"
+run  = "yank"
+desc = "复制选定文件"
+
+[[keys]]
+on   = "x"
+run  = "yank --cut"
+desc = "剪切选定文件"
+
+[[keys]]
+on   = "Y"
+run  = "unyank"
+desc = "取消复制/剪切状态"
+
+[[keys]]
+on   = "X"
+run  = "unyank"
+desc = "取消复制/剪切状态"
+
+[[keys]]
+on   = "<Space>"
+run  = "toggle"
+desc = "切换选入/选出（多选）"
+
+[[keys]]
+on   = "p"
+run  = "paste"
+desc = "粘贴（同名先询问）"
+
+[[keys]]
+on   = "P"
+run  = "paste --force"
+desc = "强制粘贴（覆盖同名）"
+
+[[keys]]
+on   = "u"
+run  = "undo"
+desc = "撤回最近一步（Ctrl+Z 同义）"
+
+[[keys]]
+on   = "T"
+run  = "terminal"
+desc = "在终端中打开（光标行，须是文件夹）"
+
+[[keys]]
+on   = "o"
+run  = "menu"
+desc = "打开光标行的菜单（同右键）"
+
+[[keys]]
+on   = "L"
+run  = "link"
+desc = "创建链接（面板：绝对/相对/硬链，再来是路径）"
+
