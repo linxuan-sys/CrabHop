@@ -2628,6 +2628,86 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&ledgers);
 	}
 
+	/// P40: `Del` in the index panel reaches the 高频 and 最近 zones too — the standing frecency
+	/// entry goes whole (path, score and clock), the store's own file loses the path, the toast
+	/// carries the undo, and the undo brings the score back exactly as it was. The bookmarks'
+	/// own delete is the same door it always was. The store is the test's own state dir.
+	#[test]
+	fn the_index_panel_deletes_a_frecency_row_and_the_undo_brings_the_score_back() {
+		let tmp = std::env::temp_dir().join(format!("crabhop-frecency-del-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&tmp);
+		std::fs::create_dir_all(&tmp).expect("a state dir of the test's own");
+
+		// two entries of the test's own: `hot` clearly the high-frequency head, `cold` behind it
+		let hot = std::env::temp_dir().join(format!("crabhop-frecency-hot-{}", std::process::id()));
+		let cold = std::env::temp_dir().join(format!("crabhop-frecency-cold-{}", std::process::id()));
+		std::fs::create_dir_all(&hot).expect("hot");
+		std::fs::create_dir_all(&cold).expect("cold");
+		let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+		std::fs::write(
+			tmp.join("frecency.json"),
+			format!(
+				"{{\"entries\":[{{\"path\":\"{}\",\"score\":9.5,\"last\":{now}}},{{\"path\":\"{}\",\"score\":1.0,\"last\":{}}}]}}",
+				hot.display(),
+				cold.display(),
+				now.saturating_sub(1000)
+			),
+		)
+		.expect("the store");
+
+		let mut s = session(Vec::new());
+		// the store is the test's own file (P40's seam): every session writes its visits to its own
+		// store, so a shared file is a race the assertions must not run
+		let store = tmp.join("frecency.json");
+		s.app.set_frecency_path_for_tests(store.clone());
+
+		let wait = |s: &mut Session, mut done: Box<dyn FnMut(&Session) -> bool>| {
+			for _ in 0..200 {
+				std::thread::sleep(Duration::from_millis(8));
+				s.shoot();
+				if done(s) {
+					return;
+				}
+			}
+		};
+		let listed = |s: &Session| s.app.fuzzy_rows_for_tests().iter().any(|(_, text)| text.contains("frecency-hot"));
+
+		// the panel opens on its list; the 高频 zone's head is the standing row
+		s.app.rehearse(vec![ "key i".to_owned() ]);
+		wait(&mut s, Box::new(listed));
+		let rows = s.app.fuzzy_rows_for_tests();
+		assert_eq!(rows.first().map(|(zone, _)| *zone), Some("高频"), "the head is the high zone's own: {rows:?}");
+
+		// `Del`: the row goes, the file forgets the path, the toast carries the undo
+		s.app.rehearse(vec![ "key Delete".to_owned() ]);
+		wait(&mut s, Box::new(move |s| !listed(s)));
+		assert!(!listed(&s), "the row is gone from the panel");
+		let filed = std::fs::read_to_string(&store).expect("the store is there");
+		assert!(!filed.contains("frecency-hot"), "the file lost the path: {filed}");
+		assert!(filed.contains("frecency-cold"), "and kept its neighbour: {filed}");
+		assert!(s.app.toast_undo_for_tests(), "the toast offers the undo");
+
+		// the panel lets the keyboard go, then `u`: the entry comes back with its own score
+		s.app.rehearse(vec![ "key Esc".to_owned(), "key u".to_owned() ]);
+		for _ in 0..120 {
+			if s.app.replay_done_for_tests() {
+				break;
+			}
+			std::thread::sleep(Duration::from_millis(8));
+			s.shoot();
+		}
+		for _ in 0..6 {
+			s.shoot();
+		}
+		let filed = std::fs::read_to_string(&store).expect("the store is there");
+		assert!(filed.contains("frecency-hot"), "the undo brought the path back: {filed}");
+		assert!(filed.contains("9.5"), "and the score exactly as it was: {filed}");
+
+		let _ = std::fs::remove_dir_all(&tmp);
+		let _ = std::fs::remove_dir_all(&hot);
+		let _ = std::fs::remove_dir_all(&cold);
+	}
+
 	/// A picture's own scroll stops at the column's top (P27①'s spill, caught by eye on the
 	/// evidence frames): with a zoomed picture scrolled up, the tab bar's band holds none of it —
 	/// the column's own clip keeps the chrome clean. A picture at the fit is whole inside its

@@ -46,7 +46,7 @@ pub(crate) const PARENT_META: bool = false;
 pub(crate) const CURRENT_META: bool = true;
 /// The index panel's footer (P22): the keys that are only its own, and the `A` the table asked to
 /// keep in sight so the add is not forgotten.
-const INDEX_HINT: &str = "Enter 跳转 · Ctrl+S 保存目录为索引 · Del 删除 · i 再按跳输入框 · Esc 退出";
+const INDEX_HINT: &str = "Enter 跳转 · Ctrl+S 保存目录为索引 · Del 删除所选 · i 再按跳输入框 · Esc 退出";
 /// `M`'s panel, its keys said where a person looks for them (P21's table): the nine options, two
 /// lines of them.
 const DEVICE_HINT: &str = "↑↓ 选择 · Enter 挂载并跳转 · p 挂载 · m 挂载并跳转 · g 跳到挂载点 · Esc 关闭";
@@ -327,6 +327,15 @@ enum FuzzyPayload {
 	Device(String),
 }
 
+/// The index panel's standing row, when one of its zones owns it (P40): the bookmarks zone names
+/// its entry, the 高频 and 最近 zones stand on a frecency path — both the store's own.
+enum IndexEntry {
+	/// A bookmark, by the name its store knows it under.
+	Bookmark(String),
+	/// A frecency row: the path, and the zone it was standing in (for the words).
+	Frecency(PathBuf, &'static str),
+}
+
 /// A filter running off this thread: for a list past the spec's two thousand the matching goes
 /// where it belongs, and the answer is taken only when its generation is still the current one.
 struct FilterJob {
@@ -562,6 +571,9 @@ pub(crate) struct App {
 	/// touching the shared sandbox file the other tests read.
 	mimeapps_path_for_tests:        Option<PathBuf>,
 	mimeapps_system_path_for_tests: Option<PathBuf>,
+	/// The frecency store a test's own window reads and writes (P40): a file of the test's own —
+	/// every session writes its visits to the store, so a shared file is a race under load.
+	frecency_path_for_tests:        Option<PathBuf>,
 	/// What a dry default open would have handed over (P37①): the path, newest last.
 	open_log:    (std::sync::mpsc::Sender<PathBuf>, std::sync::mpsc::Receiver<PathBuf>),
 	/// Whether a yank offers the file-managers' clipboard flavors too (P35④ phase two): on in the
@@ -761,6 +773,7 @@ impl App {
 			mimeapps_for_tests: None,
 			mimeapps_path_for_tests: None,
 			mimeapps_system_path_for_tests: None,
+			frecency_path_for_tests: None,
 			uri_offers: true,
 			cmdline: None,
 			history: History::load(),
@@ -2472,6 +2485,20 @@ impl App {
 		self.mimeapps_path_for_tests.clone().or_else(crate::config::Config::mimeapps)
 	}
 
+	/// The frecency store's own path (P40): the test's own when it named one, the state dir
+	/// otherwise.
+	fn frecency_path(&self) -> Option<PathBuf> {
+		self.frecency_path_for_tests.clone().or_else(|| crate::config::Config::state("frecency.json"))
+	}
+
+	/// The store written where `frecency_path` says: the seam's own file for a test, the state
+	/// dir's for the window.
+	fn frecency_save(&self) {
+		if let Some(at) = self.frecency_path() {
+			self.frecency.save_at(&at);
+		}
+	}
+
 	/// The desk's ledger at the system level (P38④): read live like the person's own, and only
 	/// ever behind it.
 	fn system_preferences_text(&self) -> String {
@@ -2637,6 +2664,12 @@ impl App {
 			Undo::BookmarkDelete { name, path } => {
 				self.bookmarks.put(book::Bookmark { name, path });
 				self.bookmarks.save();
+				self.fuzzy_rebuild();
+			}
+			Undo::FrecencyDelete { path, score, last } => {
+				// P40: the score and the clock come back whole — the row ranks where it ranked
+				self.frecency.put(frecency::Entry { path, score, last });
+				self.frecency_save();
 				self.fuzzy_rebuild();
 			}
 			Undo::Trash(paths) => {
@@ -3337,30 +3370,44 @@ impl App {
 
 	// ---- the fuzzy panel (§5.3) ----
 
-	/// The index panel's standing row, if it is an index entry: what Del, F2 and the panel's own
-	/// footer act on.
-	fn index_entry(&self) -> Option<String> {
+	/// The index panel's standing row, if it is an entry one of the zones owns: what `Del` acts on.
+	fn index_entry(&self) -> Option<IndexEntry> {
 		let fuzzy = self.fuzzy.as_ref().filter(|fuzzy| fuzzy.mode == FuzzyMode::Index)?;
 		let item = fuzzy.hits.get(fuzzy.at).and_then(|hit| fuzzy.items.get(hit.at))?;
 
 		match &item.payload {
-			FuzzyPayload::Index(name) => Some(name.clone()),
+			FuzzyPayload::Index(name) => Some(IndexEntry::Bookmark(name.clone())),
+			// the index mode's only other payload is the frecency path of the 高频/最近 zones
+			FuzzyPayload::Path(path) => Some(IndexEntry::Frecency(path.clone(), item.zone)),
 			_ => None,
 		}
 	}
 
-	/// `Del` in the index panel: the standing bookmark goes (a path that is not there can only
-	/// be deleted this way).
+	/// `Del` in the index panel (P24; P40 for the other two zones): the standing entry goes — a
+	/// bookmark from its store, or a 高频/最近 row from the frecency's — and the toast offers it
+	/// back. A bookmark's path that is not there can only be deleted this way; a frecency row
+	/// carries its score and clock into the undo, so a restore ranks where it ranked.
 	fn index_delete(&mut self) {
-		let Some(name) = self.index_entry() else { return };
-		let Some(removed) = self.bookmarks.remove(&name) else { return };
+		match self.index_entry() {
+			Some(IndexEntry::Bookmark(name)) => {
+				let Some(removed) = self.bookmarks.remove(&name) else { return };
+				self.bookmarks.save();
+				self.note(
+					format!("已删除索引 {}（{}）", removed.name, frecency::display(&removed.path)),
+					Undo::BookmarkDelete { name: removed.name, path: removed.path },
+				);
+			}
+			Some(IndexEntry::Frecency(path, zone)) => {
+				let Some(removed) = self.frecency.remove(&path) else { return };
+				self.frecency_save();
+				self.note(
+					format!("已从{zone}删除 {}（分数 {:.2}）", frecency::display(&removed.path), removed.score),
+					Undo::FrecencyDelete { path: removed.path, score: removed.score, last: removed.last },
+				);
+			}
+			None => return,
+		}
 
-		self.bookmarks.save();
-		self.toasts.push_with_undo(
-			format!("已删除索引 {}（{}）", removed.name, frecency::display(&removed.path)),
-			toast::Kind::Ok,
-			Some(Undo::BookmarkDelete { name: removed.name, path: removed.path }),
-		);
 		self.fuzzy_rebuild();
 	}
 
@@ -7821,7 +7868,7 @@ impl App {
 		if self.visited.as_deref() != Some(here.as_path()) {
 			self.visited = Some(here.clone());
 			self.frecency.visit(&here, now_secs());
-			self.frecency.save();
+			self.frecency_save();
 		}
 
 		// 3. the wheel, and the smooth scroll it feeds
@@ -7933,6 +7980,14 @@ impl App {
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn fuzzy_focus_for_tests(&self) -> Option<bool> {
 		self.fuzzy.as_ref().map(|fuzzy| fuzzy.focus.inside)
+	}
+
+	/// The fuzzy panel's own rows as they stand (P40's own reading): `(zone, text)` in the walked
+	/// order — what the index panel shows, zone by zone, for the tests that watch a row come and go.
+	#[cfg_attr(not(test), allow(dead_code))]
+	pub(crate) fn fuzzy_rows_for_tests(&self) -> Vec<(&'static str, String)> {
+		let Some(fuzzy) = &self.fuzzy else { return Vec::new() };
+		fuzzy.hits.iter().filter_map(|hit| fuzzy.items.get(hit.at)).map(|item| (item.zone, item.text.clone())).collect()
 	}
 
 	/// The sort the window runs and whether it is reversed (P33⑭'s guard: the status bar's words
@@ -8100,6 +8155,14 @@ impl App {
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn set_mimeapps_system_path_for_tests(&mut self, at: PathBuf) {
 		self.mimeapps_system_path_for_tests = Some(at);
+	}
+
+	/// P40's own seam: the frecency store the window reads from and writes to becomes the test's
+	/// file — loaded now, from there on every visit and delete lands there.
+	#[cfg_attr(not(test), allow(dead_code))]
+	pub(crate) fn set_frecency_path_for_tests(&mut self, at: PathBuf) {
+		self.frecency = frecency::Frecency::load_at(&at);
+		self.frecency_path_for_tests = Some(at);
 	}
 
 	/// The preferences the window holds for a test (P38②): what `Ctrl+Enter`'s merge wrote, read
@@ -8699,7 +8762,7 @@ mod query_tests {
 	/// under them — the `A 添加该目录索引` wording is gone.
 	#[test]
 	fn the_index_footers_words_are_the_final_ones() {
-		assert_eq!(INDEX_HINT, "Enter 跳转 · Ctrl+S 保存目录为索引 · Del 删除 · i 再按跳输入框 · Esc 退出");
+		assert_eq!(INDEX_HINT, "Enter 跳转 · Ctrl+S 保存目录为索引 · Del 删除所选 · i 再按跳输入框 · Esc 退出");
 		assert!(!INDEX_HINT.contains("A 添加"), "the old add wording is replaced");
 		assert!(!INDEX_HINT.contains("F2"), "and the rename is not advertised");
 	}

@@ -48,6 +48,13 @@ pub(crate) enum Undo {
 	},
 	/// Take the created links away — undoing a link (P33⑫).
 	Link(Vec<PathBuf>),
+	/// Put a frecency entry back as it was (P40) — undoing a `Del` in the index panel's 高频 or
+	/// 最近 zone: the score and the clock are restored whole, so the row ranks where it ranked.
+	FrecencyDelete {
+		path:  PathBuf,
+		score: f64,
+		last:  u64,
+	},
 }
 
 impl Undo {
@@ -62,6 +69,7 @@ impl Undo {
 			Undo::Moved { .. } => "moved",
 			Undo::Rename { .. } => "rename",
 			Undo::Link(_) => "link",
+			Undo::FrecencyDelete { .. } => "frecency-delete",
 		}
 	}
 }

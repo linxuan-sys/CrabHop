@@ -29,22 +29,28 @@ pub(crate) struct Frecency {
 
 impl Frecency {
 	pub(crate) fn load() -> Self {
-		Config::state("frecency.json")
-			.and_then(|path| std::fs::read_to_string(path).ok())
-			.and_then(|text| serde_json::from_str(&text).ok())
-			.unwrap_or_default()
+		match Config::state("frecency.json") {
+			Some(path) => Self::load_at(&path),
+			None => Self::default(),
+		}
 	}
 
-	pub(crate) fn save(&self) {
-		let Some(path) = Config::state("frecency.json") else { return };
-		if let Some(dir) = path.parent()
+	/// The store's own file, read from wherever it stands (P40's seam: a test's own store is
+	/// nobody else's — every session writes its own visits to one, so a shared file is a race).
+	pub(crate) fn load_at(at: &Path) -> Self {
+		std::fs::read_to_string(at).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+	}
+
+	/// Written whole where the caller says (P40): the directory made first, the store's own shape.
+	pub(crate) fn save_at(&self, at: &Path) {
+		if let Some(dir) = at.parent()
 			&& Config::ensure(dir).is_err()
 		{
 			return;
 		}
 
 		if let Ok(text) = serde_json::to_string_pretty(self) {
-			let _ = std::fs::write(path, text);
+			let _ = std::fs::write(at, text);
 		}
 	}
 
@@ -61,6 +67,21 @@ impl Frecency {
 		if self.entries.len() > CAP {
 			self.demote(now);
 		}
+	}
+
+	/// The panel's own `Del` (P40): the entry goes whole — path, score and clock — and the caller
+	/// says so on a toast and offers it back; the bookmarks' own delete is the same shape.
+	pub(crate) fn remove(&mut self, path: &Path) -> Option<Entry> {
+		let at = self.entries.iter().position(|entry| entry.path == path)?;
+
+		Some(self.entries.remove(at))
+	}
+
+	/// An entry back exactly as it was (P40's undo): its own path, its own score, its own clock —
+	/// a restored entry ranks and ages the way it did before the delete, never as a fresh visit.
+	pub(crate) fn put(&mut self, entry: Entry) {
+		self.entries.retain(|other| other.path != entry.path);
+		self.entries.push(entry);
 	}
 
 	/// The list the panel jumps from: what every score is worth today, best first.
@@ -122,6 +143,25 @@ mod tests {
 		assert_eq!(decay(4.0, 0), 4.0);
 		assert!((decay(4.0, HALF_LIFE as u64) - 2.0).abs() < 1e-9);
 		assert!((decay(4.0, (HALF_LIFE * 2.0) as u64) - 1.0).abs() < 1e-9);
+	}
+
+	/// The panel's own delete and its undo (P40): the entry goes whole, and the put brings back
+	/// the very score and clock — a restored row ranks where it ranked, never as a fresh visit.
+	#[test]
+	fn an_entry_goes_and_comes_back_whole() {
+		let mut store = Frecency::default();
+		store.visit(Path::new("/tmp/a"), 1000);
+		store.visit(Path::new("/tmp/b"), 1000);
+
+		let removed = store.remove(Path::new("/tmp/a")).expect("the entry was there");
+		assert_eq!(removed.score, 1.0);
+		assert_eq!(store.entries.len(), 1, "it is gone from the store");
+		assert!(store.remove(Path::new("/tmp/a")).is_none(), "and it does not go twice");
+
+		store.put(Entry { score: 9.5, last: 500, ..removed });
+		let back = store.entries.iter().find(|entry| entry.path == Path::new("/tmp/a")).expect("it is back");
+		assert_eq!((back.score, back.last), (9.5, 500), "the score and the clock are the ones put back");
+		assert_eq!(store.entries.len(), 2, "no copy stands beside it");
 	}
 
 	/// A directory visited twice is worth more than one visited once long ago; the ranking reads
