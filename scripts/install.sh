@@ -52,8 +52,9 @@ command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -qtf "
 # that is already there — those are the person's edits, not ours.
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/crabhop"
 mkdir -p "$conf"
-for pair in "keymap-default.toml:keymap.toml.example" "config.example.toml:config.toml.example"; do
+for pair in "keymap-default.toml:keymap.toml.example" "config.example.toml:config.toml.example" "theme.toml.example:theme.toml.example"; do
 	src="$here/${pair%%:*}"
+	[ -f "$src" ] || src="$here/packaging/${pair%%:*}"
 	dst="$conf/${pair##*:}"
 	[ -f "$src" ] && [ ! -e "$dst" ] && install -m644 "$src" "$dst"
 done

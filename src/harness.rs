@@ -3420,4 +3420,22 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&dir);
 		let _ = std::fs::remove_dir_all(&dir2);
 	}
+
+	#[test]
+	fn a_theme_recolours_the_frame() {
+		let (tokens, notes) = Tokens::parse("[colors]\nbase = \"#123456\"\n");
+		assert!(notes.is_empty(), "{notes:?}");
+
+		let mut s = session(Vec::new());
+		for _ in 0..30 {
+			std::thread::sleep(Duration::from_millis(20));
+			s.shoot();
+		}
+		let before = s.shoot();
+		assert!(!before.pixels.contains(&tokens.base), "the factory frame has no such base");
+
+		s.app.set_tokens_for_tests(tokens);
+		let after = s.shoot();
+		assert!(after.pixels.contains(&tokens.base), "the new base paints the middle column");
+	}
 }

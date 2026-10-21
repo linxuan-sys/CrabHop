@@ -27,6 +27,7 @@ install -m755 "$here/scripts/install.sh" "$root/install.sh"
 install -m755 "$here/scripts/uninstall.sh" "$root/uninstall.sh"
 install -m644 "$here/packaging/crabhop.desktop" "$root/crabhop.desktop"
 install -m644 "$here/packaging/config.example.toml" "$root/config.example.toml"
+install -m644 "$here/packaging/theme.toml.example" "$root/theme.toml.example"
 install -m644 "$here/keymap-default.toml" "$root/keymap-default.toml"
 install -m644 "$here/assets/icons/crabhop.png" "$root/icon.png"
 for size in 512x512 256x256 128x128; do

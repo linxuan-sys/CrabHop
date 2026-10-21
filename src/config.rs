@@ -43,16 +43,20 @@ impl Columns {
 }
 
 impl Config {
-	pub(crate) fn path() -> Option<PathBuf> {
+	pub(crate) fn dir() -> Option<PathBuf> {
 		if let Some(dir) = CONFIG_DIR.get() {
-			return Some(dir.join("config.toml"));
+			return Some(dir.clone());
 		}
 
 		let base = std::env::var_os("XDG_CONFIG_HOME")
 			.map(PathBuf::from)
 			.or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
 
-		Some(base.join("crabhop").join("config.toml"))
+		Some(base.join("crabhop"))
+	}
+
+	pub(crate) fn path() -> Option<PathBuf> {
+		Some(Self::dir()?.join("config.toml"))
 	}
 
 	pub(crate) fn mimeapps() -> Option<PathBuf> {

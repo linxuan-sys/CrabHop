@@ -466,16 +466,19 @@ enum WheelOwner {
 
 impl App {
 	pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Self {
+		let tokens = Tokens::theme();
 		let late = std::env::var("CRABHOP_FONTS").is_ok_and(|mode| mode == "late");
 		if !late {
-			Tokens::install(&cc.egui_ctx);
+			Tokens::install_with(&cc.egui_ctx, &tokens);
 		}
 
 		let seed: Vec<String> = std::env::var("CRABHOP_KEYS")
 			.map(|keys| keys.split(';').map(|step| step.trim().to_owned()).filter(|s| !s.is_empty()).collect())
 			.unwrap_or_default();
 
-		Self::with_context(cc.egui_ctx.clone(), seed)
+		let mut app = Self::with_context(cc.egui_ctx.clone(), seed);
+		app.tokens = tokens;
+		app
 	}
 
 	pub(crate) fn with_context(ctx: egui::Context, seed: Vec<String>) -> Self {
@@ -6831,7 +6834,7 @@ impl App {
 		}
 		if !self.dressed {
 			self.dressed = true;
-			Tokens::install(&ctx);
+			Tokens::install_with(&ctx, &self.tokens);
 			ctx.request_repaint();
 		}
 
@@ -6841,6 +6844,11 @@ impl App {
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn cursor_for_tests(&self) -> usize {
 		self.cursor()
+	}
+
+	#[cfg_attr(not(test), allow(dead_code))]
+	pub(crate) fn set_tokens_for_tests(&mut self, tokens: Tokens) {
+		self.tokens = tokens;
 	}
 
 	#[cfg_attr(not(test), allow(dead_code))]

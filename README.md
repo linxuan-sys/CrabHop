@@ -91,18 +91,22 @@ cd crabhop-1.0.0 && ./uninstall.sh     # 撤掉 ~/.local 里的程序、菜单�
 
 ## 配置
 
-安装脚本会在 `~/.config/crabhop/` 放两份**示例**（已存在则不覆盖）：
+安装脚本会在 `~/.config/crabhop/` 放三份**示例**（已存在则不覆盖）：
 
 - `keymap.toml.example` —— 完整 94 行键位表，抄成 `keymap.toml` 改
 - `config.toml.example` —— 带注释的三列比例示例，抄成 `config.toml` 改
+- `theme.toml.example` —— 25 个颜色字段的出厂值，抄成 `theme.toml` 后只留想改的
 
 出厂文件在仓库里，用户文件在 `~/.config/crabhop/`，后者覆盖前者：
 
 | 文件 | 覆盖什么 |
 |---|---|
 | `config.toml` | 三列比例；缺字段用出厂值 |
+| `theme.toml` | 颜色；`[colors]` 段，字段名同 `src/tokens.rs`，值写 `#rrggbb` |
 | `keymap.toml` | 整张键位表；不写则用仓库内的 `keymap-default.toml` |
 | `~/.config/mimeapps.list` | 默认打开程序（与桌面其他程序共用同一本账） |
+
+`theme.toml` 坏值、未知字段或不是 TOML，只在 stderr 提一句，然后继续用出厂颜色。
 
 ## 无头测试架
 
@@ -227,13 +231,18 @@ rebuilt on demand).
 
 ## Configuration
 
-The installer drops two **examples** into `~/.config/crabhop/` (never overwriting anything already
-there): `keymap.toml.example`, the full 94-row key table to copy into `keymap.toml`, and
-`config.toml.example`, a commented column-share file to copy into `config.toml`.
+The installer drops three **examples** into `~/.config/crabhop/` (never overwriting anything already
+there): `keymap.toml.example`, the full 94-row key table to copy into `keymap.toml`,
+`config.toml.example`, a commented column-share file to copy into `config.toml`, and
+`theme.toml.example`, all 25 colour fields at their factory values to copy into `theme.toml`.
 
 Factory files live in the repository, the person's in `~/.config/crabhop/`, the latter overriding
-the former: `config.toml` (column shares), `keymap.toml` (the whole key table), and the desktop's
-own `mimeapps.list` for default applications.
+the former: `config.toml` (column shares), `theme.toml` (colours), `keymap.toml` (the whole key
+table), and the desktop's own `mimeapps.list` for default applications.
+
+`theme.toml` takes a `[colors]` table named after the fields in `src/tokens.rs`, values `#rrggbb`;
+write only the fields you want to change. A bad value, an unknown field or a file that is not TOML
+is reported on stderr for one line and ignored — the factory colour stands.
 
 ## The headless harness
 
