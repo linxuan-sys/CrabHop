@@ -6,7 +6,8 @@ Comment=Native, keyboard-first file manager / 原生键盘优先的文件管理�
 Exec=crabhop %F
 Icon=crabhop
 Terminal=false
-Categories=System;FileManager;Utility;
+# A main category first (desktop-file-validate asks for one), the file-manager role beside it.
+Categories=Utility;System;FileManager;
 MimeType=inode/directory;
 Keywords=crabhop;file;manager;files;
 StartupWMClass=crabhop

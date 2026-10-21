@@ -1,5 +1,5 @@
 #!/bin/sh
-# Take back what scripts/install.sh put down. The window's own state (~/.config/crabhop,
+# Take back what ./install.sh put down. The window's own state (~/.config/crabhop,
 # ~/.local/share/crabhop, ~/.cache/crabhop) is left alone on purpose — that is the person's, not
 # the package's. Remove those three by hand if they are not wanted any more.
 set -eu
