@@ -22,7 +22,7 @@ pkgbase = crabhop
 	optdepends = ffmpegthumbnailer: faster video thumbnails
 	source = crabhop-1.0.0.tar.gz::https://github.com/linxuan-sys/CrabHop/archive/v1.0.0.tar.gz
 	source = pdfium-linux-x64-static.tgz::https://github.com/kognitos/pdfium-static/releases/download/chromium%2F7809/pdfium-linux-x64-static.tgz
-	sha256sums = 4825adaf88250629c2356ec152edc6eda6d7331b77b7dd34e7153bdd1989a371
+	sha256sums = 52fb4a528986079398c45bd2c2c5ea45d42579f86b6585bcf4f2b14efe0f6ece
 	sha256sums = 13908bb2d40a6e017c4c5a6a7baecc6efd7b1c30392c8a79e80072d2b48b18eb
 
 pkgname = crabhop
