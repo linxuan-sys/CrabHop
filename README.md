@@ -7,6 +7,11 @@
 
 ---
 
+![CrabHop 演示 1](https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.0/demo-1.gif)
+![CrabHop 演示 2](https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.0/demo-2.gif)
+
+[完整演示视频（2 分 47 秒）](https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.0/crabhop-demo.mp4)
+
 ## 它是什么
 
 CrabHop 是一个桌面文件管理器：左边是当前目录的父级、中间是当前目录、右边是预览列。
@@ -147,6 +152,11 @@ MIT（见 `LICENSE`）。第三方署名见 `NOTICE`：
 A native, keyboard-first file manager for Linux: three columns drawn by the window itself, a
 native preview stack, and a headless harness that replays keys and paints frames without a window.
 A single Rust binary; nothing to install beside the system's own libraries.
+
+![CrabHop demo 1](https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.0/demo-1.gif)
+![CrabHop demo 2](https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.0/demo-2.gif)
+
+[Full demo video (2:47)](https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.0/crabhop-demo.mp4)
 
 ## What it is
 
