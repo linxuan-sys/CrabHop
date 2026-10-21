@@ -33,11 +33,10 @@ optdepends=(
 makedepends=('cargo' 'rust')
 # The release tarball is the pinned tag; the PDFium tarball is the very one
 # scripts/fetch-pdfium.sh fetches, same sha256 — unpacked in prepare, so the build itself needs
-# no network of its own. (The first sum is SKIP until the tag is pushed; fill it from the
-# release tarball before submitting to the AUR.)
+# no network of its own.
 source=("$pkgname-$pkgver.tar.gz::https://github.com/linxuan-sys/CrabHop/archive/v$pkgver.tar.gz"
 	"pdfium-linux-x64-static.tgz::https://github.com/kognitos/pdfium-static/releases/download/chromium%2F7809/pdfium-linux-x64-static.tgz")
-sha256sums=('SKIP'
+sha256sums=('4825adaf88250629c2356ec152edc6eda6d7331b77b7dd34e7153bdd1989a371'
 	'13908bb2d40a6e017c4c5a6a7baecc6efd7b1c30392c8a79e80072d2b48b18eb')
 
 prepare() {
