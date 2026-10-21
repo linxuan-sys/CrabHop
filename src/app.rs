@@ -670,6 +670,9 @@ pub(crate) struct App {
 	/// The panel's own place as last drawn (P37③): the harness reads its height — the floor is a
 	/// promise about a rect, not a formula.
 	menu_panel:  Option<egui::Rect>,
+	/// The toasts' own widths as last drawn (P42②): `(the rect, the text's own measure)` per
+	/// seat, oldest first — what the harness reads to say a rect fits its words.
+	toast_widths: Vec<(f32, f32)>,
 
 	hover:     Option<egui::Pos2>,
 	/// Whether the real fonts are in. They go in before the first frame now; the
@@ -820,6 +823,7 @@ impl App {
 			reveal: None,
 			hover: None,
 			menu_panel: None,
+			toast_widths: Vec::new(),
 			dressed: !late,
 			dress_at: if late { 2 } else { 1 },
 			shot_wait: None,
@@ -6459,11 +6463,21 @@ impl App {
 		let painter = ui.painter().clone();
 		let now = Instant::now();
 		let len = self.toasts.len();
-		let (width, height) = (300.0f32, 40.0f32);
+		let height = 40.0f32;
+		// the note is as wide as what it says (P42②): the text measured, the bar and the paddings
+		// and the undo's seat added — clamped only by the window's own width, so a long sentence
+		// reads whole instead of being cut to a fixed sheet
+		let max_w = (area.width() - 24.0).max(160.0);
 		let cell = painter.layout_no_wrap("0".to_owned(), small.clone(), tokens.text).size().x;
 		let (mut undo_at, mut dismiss_at) = (None, None);
+		let mut widths: Vec<(f32, f32)> = Vec::with_capacity(len);
 
 		for (i, toast) in self.toasts.items().enumerate() {
+			let text_w = painter.layout_no_wrap(toast.text.clone(), small.clone(), tokens.text).size().x;
+			let want = text_w + 28.0 + if toast.undo.is_some() { 50.0 } else { 0.0 };
+			let width = want.clamp(160.0, max_w);
+			widths.push((width, text_w));
+
 			let slot = (len - 1 - i) as f32;
 			let age = toast.age(now);
 			let alpha = toast::alpha(age);
@@ -6505,6 +6519,8 @@ impl App {
 				tokens.text.gamma_multiply(alpha),
 			);
 		}
+
+		self.toast_widths = widths;
 
 		if let Some(at) = dismiss_at {
 			self.toasts.dismiss(at);
@@ -8335,6 +8351,12 @@ impl App {
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn toast_text_for_tests(&self) -> Option<String> {
 		self.toasts.items().last().map(|toast| toast.text.clone())
+	}
+
+	/// The toasts' own widths as last drawn (P42②): `(rect, text)` per seat, oldest first.
+	#[cfg_attr(not(test), allow(dead_code))]
+	pub(crate) fn toast_widths_for_tests(&self) -> Vec<(f32, f32)> {
+		self.toast_widths.clone()
 	}
 
 	/// The failure a refusing launcher would send, for the harness's own test of P30's failure.

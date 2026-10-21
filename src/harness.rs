@@ -2800,6 +2800,40 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
+	/// P42②: a toast is as wide as what it says — the rect measured from the text (the bar's and
+	/// the undo seat's room included) instead of a fixed sheet that cut words off; the window's
+	/// own width is the only clamp.
+	#[test]
+	fn a_toast_is_as_wide_as_its_words() {
+		let mut s = session(Vec::new());
+		assert!(s.wait_for_list(2, 200), "the listing lands first");
+
+		// a long file name, said the way a refusing launcher's failure is: longer than the old
+		// fixed sheet, and short enough to stand whole inside the window
+		let long = "/tmp/".to_owned() + &"长".repeat(40) + ".txt";
+		s.app.open_failed_for_tests(std::path::PathBuf::from(long));
+		for _ in 0..60 {
+			std::thread::sleep(Duration::from_millis(8));
+			s.shoot();
+		}
+
+		let widths = s.app.toast_widths_for_tests();
+		let (width, text_w) = *widths.last().expect("a toast was drawn");
+		assert!(width >= text_w, "the rect fits its words: {width} against {text_w}");
+		assert!(width > 300.0, "and outgrows the fixed sheet it used to be: {width}");
+
+		// a short note stays a short note
+		s.app.open_failed_for_tests(std::path::PathBuf::from("/tmp/x.txt"));
+		for _ in 0..30 {
+			std::thread::sleep(Duration::from_millis(8));
+			s.shoot();
+		}
+		let widths = s.app.toast_widths_for_tests();
+		let (short_w, short_text) = *widths.last().expect("the second toast was drawn");
+		assert!(short_w < width, "the short one is narrower: {short_w} against {width}");
+		assert!(short_w >= short_text, "and it too fits its words");
+	}
+
 	/// A picture's own scroll stops at the column's top (P27①'s spill, caught by eye on the
 	/// evidence frames): with a zoomed picture scrolled up, the tab bar's band holds none of it —
 	/// the column's own clip keeps the chrome clean. A picture at the fit is whole inside its
