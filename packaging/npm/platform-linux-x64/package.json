@@ -1,0 +1,15 @@
+{
+  "name": "crabhop-linux-x64",
+  "version": "1.0.0",
+  "description": "CrabHop 的 linux-x64 预编译二进制",
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ]
+}
