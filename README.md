@@ -82,6 +82,8 @@ cargo build --release
 
 依赖：Rust 工具链、Vulkan 驱动、Wayland 或 X11。可选 `ffmpeg` / `ffmpegthumbnailer`（视频首帧）。
 
+`npm i -g crabhop` 装的用户也一样：首次运行会自动把菜单项和图标写进 `~/.local/share`。
+
 ## 卸载
 
 ```sh
@@ -225,6 +227,8 @@ scripts/fetch-pdfium.sh      # the static library PDF preview needs, once
 cargo build --release
 ./target/release/crabhop
 ```
+
+Installed through `npm i -g crabhop`? The first run puts the menu entry and the icons under `~/.local/share` by itself.
 
 Needs a Rust toolchain, a Vulkan driver, and Wayland or X11. `ffmpeg` / `ffmpegthumbnailer` are
 optional (video first frames).

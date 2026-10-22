@@ -40,6 +40,8 @@ fn main() -> eframe::Result {
 		return Ok(());
 	}
 
+	desktop::register();
+
 	let mut viewport = eframe::egui::ViewportBuilder::default().with_title("CrabHop").with_inner_size(inner_size());
 	if let Some(icon) = window_icon() {
 		viewport = viewport.with_icon(icon);

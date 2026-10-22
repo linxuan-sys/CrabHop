@@ -1,5 +1,60 @@
 
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+const MENU: &str = include_str!("../packaging/crabhop.desktop");
+
+const LAUNCH_ICONS: [(&str, &[u8]); 3] = [
+	("512x512", include_bytes!("../assets/icons/hicolor/512x512/apps/crabhop.png")),
+	("256x256", include_bytes!("../assets/icons/hicolor/256x256/apps/crabhop.png")),
+	("128x128", include_bytes!("../assets/icons/hicolor/128x128/apps/crabhop.png")),
+];
+
+pub(crate) fn register() {
+	let Some(data) = std::env::var_os("XDG_DATA_HOME")
+		.map(PathBuf::from)
+		.or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share")))
+	else {
+		return;
+	};
+
+	let _ = register_in(&data);
+}
+
+fn register_in(data: &Path) -> std::io::Result<()> {
+	let applications = data.join("applications");
+	let menu = applications.join("crabhop.desktop");
+	if menu.exists() {
+		return Ok(());
+	}
+
+	std::fs::create_dir_all(&applications)?;
+	std::fs::write(&menu, MENU)?;
+
+	let icons = data.join("icons").join("hicolor");
+	for (size, png) in LAUNCH_ICONS {
+		let dir = icons.join(size).join("apps");
+		std::fs::create_dir_all(&dir)?;
+		std::fs::write(dir.join("crabhop.png"), png)?;
+	}
+
+	refresh(&applications, &icons);
+
+	Ok(())
+}
+
+fn refresh(applications: &Path, icons: &Path) {
+	quiet("update-desktop-database", &[ applications ]);
+	quiet("gtk-update-icon-cache", &[ Path::new("-qtf"), icons ]);
+}
+
+fn quiet(program: &str, args: &[&Path]) {
+	let _ = Command::new(program)
+		.args(args)
+		.stdout(Stdio::null())
+		.stderr(Stdio::null())
+		.spawn();
+}
 
 pub(crate) fn mime_of(name: &str, dir: bool) -> String {
 	if dir {
@@ -423,6 +478,33 @@ pub(crate) fn terminal(
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn the_first_run_writes_the_menu_entry_and_its_icons() {
+		let data = std::env::temp_dir().join(format!("crabhop-menu-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&data);
+
+		register_in(&data).expect("the menu entry is written");
+
+		let menu = data.join("applications").join("crabhop.desktop");
+		let text = std::fs::read_to_string(&menu).expect("the entry exists");
+		assert!(text.contains("Exec=crabhop %F"), "{text}");
+		assert!(text.contains("MimeType=inode/directory;"), "{text}");
+		for size in [ "512x512", "256x256", "128x128" ] {
+			assert!(data.join("icons").join("hicolor").join(size).join("apps").join("crabhop.png").is_file(), "{size}");
+		}
+
+		let wrote = std::fs::metadata(&menu).and_then(|meta| meta.modified()).expect("a timestamp");
+		std::thread::sleep(std::time::Duration::from_millis(20));
+		register_in(&data).expect("a second call is quiet");
+		assert_eq!(
+			std::fs::metadata(&menu).and_then(|meta| meta.modified()).expect("still there"),
+			wrote,
+			"an entry already there is the person's"
+		);
+
+		let _ = std::fs::remove_dir_all(&data);
+	}
 
 	#[test]
 	fn the_mime_table_names_the_common_types() {
