@@ -1631,6 +1631,27 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	}
 
 	#[test]
+	fn the_menu_properties_opens_the_info_panel() {
+		let mut s = session(Vec::new());
+		assert!(s.wait_for_list(2, 200));
+
+		let mut steps = vec![ "menu 0".to_owned() ];
+		steps.extend((0..9).map(|_| "key j".to_owned()));
+		steps.push("key Enter".to_owned());
+		s.app.rehearse(steps);
+		for _ in 0..400 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.replay_done_for_tests() {
+				break;
+			}
+		}
+
+		assert!(s.app.menu_state_for_tests().is_none(), "the menu closed behind the pick");
+		assert!(s.app.spot_open_for_tests(), "the info panel stands");
+	}
+
+	#[test]
 	fn the_o_key_opens_the_cursor_rows_menu() {
 		let root = std::env::temp_dir().join(format!("crabhop-p36o-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&root);
@@ -1656,7 +1677,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 			}
 		}
 		let by_key = s.app.menu_state_for_tests();
-		assert_eq!(by_key, Some(("main", 4)), "`o` opened the cursor row's menu");
+		assert_eq!(by_key, Some(("main", 5)), "`o` opened the cursor row's menu");
 
 		s.app.rehearse(vec![ "key Esc".to_owned() ]);
 		for _ in 0..60 {
@@ -1783,7 +1804,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 
 		s.app.rehearse(vec![ "key Esc".to_owned() ]);
 		let back = wait_page(&mut s, "main");
-		assert_eq!(back, Some(("main", 4)), "Esc stepped back to the items");
+		assert_eq!(back, Some(("main", 5)), "Esc stepped back to the items");
 		s.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		let by_enter = wait_page(&mut s, "apps");
 		assert_eq!(by_enter, by_l, "Enter and `l` open the same state");
@@ -2954,7 +2975,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		};
 
 		session.app.rehearse(vec![ "menu 1".to_owned() ]);
-		assert_eq!(step(&mut session, Some(("main", 4))), Some(("main", 4)), "a file's menu is four rows");
+		assert_eq!(step(&mut session, Some(("main", 5))), Some(("main", 5)), "a file's menu is five rows");
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
 		assert_eq!(step(&mut session, None), None);
 
@@ -2964,7 +2985,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			session.shoot();
 		}
 		session.app.rehearse(vec![ "menu 0".to_owned() ]);
-		assert_eq!(step(&mut session, Some(("main", 5))), Some(("main", 5)), "a folder's menu has five");
+		assert_eq!(step(&mut session, Some(("main", 6))), Some(("main", 6)), "a folder's menu has six");
 
 		session.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		let apps = {
@@ -2985,7 +3006,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		);
 
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
-		assert_eq!(step(&mut session, Some(("main", 5))), Some(("main", 5)), "Esc steps back to the items");
+		assert_eq!(step(&mut session, Some(("main", 6))), Some(("main", 6)), "Esc steps back to the items");
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
 		assert_eq!(step(&mut session, None), None, "and the last Esc puts it away");
 

@@ -1881,6 +1881,12 @@ impl App {
 				Some(crate::menu::Item::Do(crate::menu::Action::Paste, _)) => self.menu_paste(),
 				Some(crate::menu::Item::Do(crate::menu::Action::OpenTerminal, _)) => self.menu_terminal(),
 				Some(crate::menu::Item::Do(crate::menu::Action::OpenWith, _)) => self.menu_apps(),
+				Some(crate::menu::Item::Do(crate::menu::Action::Spot, _)) => {
+					self.menu = None;
+					if !self.spot {
+						self.act(Action::Spot, ctx);
+					}
+				}
 				_ => {}
 			},
 			crate::menu::Page::Apps => self.menu_launch(false),
@@ -6954,6 +6960,11 @@ impl App {
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn find_pattern_for_tests(&self) -> Option<String> {
 		self.find_pattern()
+	}
+
+	#[cfg_attr(not(test), allow(dead_code))]
+	pub(crate) fn spot_open_for_tests(&self) -> bool {
+		self.spot
 	}
 
 	#[cfg_attr(not(test), allow(dead_code))]
