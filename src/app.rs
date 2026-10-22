@@ -363,6 +363,8 @@ pub(crate) struct App {
 	tab_close_hits: Vec<(usize, Rect)>,
 	tab_chip_hits:  Vec<(usize, Rect)>,
 	status_index: Option<Rect>,
+	status_trash: Option<Rect>,
+	status_help: Option<Rect>,
 
 	selection: HashSet<PathBuf>,
 	cursor_name: Option<String>,
@@ -533,6 +535,8 @@ impl App {
 			tab_close_hits: Vec::new(),
 			tab_chip_hits: Vec::new(),
 			status_index: None,
+			status_trash: None,
+			status_help: None,
 			selection: HashSet::new(),
 			yank: None,
 			preview: PreviewPane::new(ctx.clone()),
@@ -4740,39 +4744,38 @@ impl App {
 		let start = rect.max.x - 12.0 - painter.layout_no_wrap(right.clone(), small.clone(), tokens.subtext).size().x;
 
 		let open = self.index_open();
-		let name = "索引";
-		let name_width = painter.layout_no_wrap(name.to_owned(), small.clone(), tokens.subtext).size().x;
-		let button = Rect::from_center_size(pos2(start - 8.0 - name_width * 0.5 - 6.0, middle), vec2(name_width + 12.0, 20.0));
-		let response = ui.interact(button, egui::Id::unique("status-index"), Sense::click());
-		if response.hovered() {
-			painter.rect_filled(button, 4.0, tokens.cursor_bg.gamma_multiply(0.5));
-		}
-		painter.text(
-			button.center(),
-			Align2::CENTER_CENTER,
-			name,
-			small.clone(),
-			if open {
-				tokens.accent
-			} else if response.hovered() {
-				tokens.text
-			} else {
-				tokens.subtext
-			},
-		);
-		if response.clicked() {
+		let mut edge = start - 10.0;
+		let (help_button, help_clicked) =
+			status_button(ui, &tokens, small, pos2(edge, middle), "帮助", self.help, "status-help");
+		edge = help_button.min.x - 6.0;
+		let (trash_button, trash_clicked) =
+			status_button(ui, &tokens, small, pos2(edge, middle), "回收站", self.in_bin(), "status-trash");
+		edge = trash_button.min.x - 6.0;
+		let (index_button, index_clicked) =
+			status_button(ui, &tokens, small, pos2(edge, middle), "索引", open, "status-index");
+
+		if index_clicked {
 			if open {
 				self.fuzzy_close();
 			} else {
 				self.fuzzy_index();
 			}
 		}
-		self.status_index = Some(button);
+		if trash_clicked && !self.in_bin() {
+			self.trash_view_open();
+		}
+		if help_clicked {
+			self.act(Action::Help, ui.ctx());
+		}
+
+		self.status_index = Some(index_button);
+		self.status_trash = Some(trash_button);
+		self.status_help = Some(help_button);
 
 		painter.text(pos2(start, middle), Align2::LEFT_CENTER, right, small.clone(), tokens.subtext);
 
-		if start - 12.0 > at {
-			painter.line_segment([ pos2(start - 10.0, rect.min.y + 6.0), pos2(start - 10.0, rect.max.y - 6.0) ], (1.0, tokens.border));
+		if index_button.min.x - 12.0 > at {
+			painter.line_segment([ pos2(index_button.min.x - 10.0, rect.min.y + 6.0), pos2(index_button.min.x - 10.0, rect.max.y - 6.0) ], (1.0, tokens.border));
 		}
 	}
 
@@ -5724,7 +5727,8 @@ impl App {
 		let visible = help_rows(&rows, &self.help_query.text);
 
 		let painter = ui.painter().clone();
-		painter.rect_filled(area, 0.0, Color32::from_black_alpha(200));
+		let dim = Rect::from_min_max(area.min, pos2(area.max.x, area.max.y - STATUS_HEIGHT));
+		painter.rect_filled(dim, 0.0, Color32::from_black_alpha(200));
 
 		let cells_of = |text: &str| text.chars().map(crate::list::cell_width).sum::<u32>() as usize;
 		let key_cells = visible.iter().filter_map(|at| rows.get(*at)).map(|(on, ..)| cells_of(on)).max().unwrap_or(8).clamp(4, 12);
@@ -6494,6 +6498,40 @@ pub(crate) fn help_size(area: Rect, key_cells: usize, word_cells: usize, visible
 	(width, height)
 }
 
+fn status_button(
+	ui: &mut Ui,
+	tokens: &Tokens,
+	small: &FontId,
+	anchor: Pos2,
+	name: &str,
+	open: bool,
+	id: &str,
+) -> (Rect, bool) {
+	let painter = ui.painter().clone();
+	let width = painter.layout_no_wrap(name.to_owned(), small.clone(), tokens.subtext).size().x + 12.0;
+	let button = Rect::from_center_size(pos2(anchor.x - width * 0.5, anchor.y), vec2(width, 20.0));
+	let response = ui.interact(button, egui::Id::unique(id), Sense::click());
+
+	if response.hovered() {
+		painter.rect_filled(button, 4.0, tokens.cursor_bg.gamma_multiply(0.5));
+	}
+	painter.text(
+		button.center(),
+		Align2::CENTER_CENTER,
+		name,
+		small.clone(),
+		if open {
+			tokens.accent
+		} else if response.hovered() {
+			tokens.text
+		} else {
+			tokens.subtext
+		},
+	);
+
+	(button, response.clicked())
+}
+
 pub(crate) fn right_group(sort: (SortBy, bool), symlinks: bool, filter: Option<&str>) -> String {
 	let label = match sort.0 {
 		SortBy::Name => "名称",
@@ -6975,6 +7013,16 @@ impl App {
 	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn status_index_hit_for_tests(&self) -> Option<egui::Rect> {
 		self.status_index
+	}
+
+	#[cfg_attr(not(test), allow(dead_code))]
+	pub(crate) fn status_trash_hit_for_tests(&self) -> Option<egui::Rect> {
+		self.status_trash
+	}
+
+	#[cfg_attr(not(test), allow(dead_code))]
+	pub(crate) fn status_help_hit_for_tests(&self) -> Option<egui::Rect> {
+		self.status_help
 	}
 
 	#[cfg_attr(not(test), allow(dead_code))]

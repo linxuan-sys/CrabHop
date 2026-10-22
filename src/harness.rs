@@ -3316,6 +3316,58 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	}
 
 	#[test]
+	fn the_status_buttons_open_index_trash_and_help() {
+		let mut s = session(Vec::new());
+		s.shoot();
+		let index = s.app.status_index_hit_for_tests().expect("the index button");
+		let trash = s.app.status_trash_hit_for_tests().expect("the trash button");
+		let help = s.app.status_help_hit_for_tests().expect("the help button");
+		assert!(
+			index.center().x < trash.center().x && trash.center().x < help.center().x,
+			"the buttons stand 索引 · 回收站 · 帮助"
+		);
+
+		let accent = Tokens::MOCHA.accent;
+		let lit = |image: &egui::ColorImage, rect: egui::Rect| -> usize {
+			let mut n = 0;
+			for y in (rect.min.y as usize)..(rect.max.y as usize) {
+				for x in (rect.min.x as usize)..(rect.max.x as usize) {
+					if image.pixels[y * image.size[0] + x] == accent {
+						n += 1;
+					}
+				}
+			}
+			n
+		};
+		let quiet_trash = lit(&s.shoot(), trash);
+		let quiet_help = lit(&s.shoot(), help);
+
+		s.click_at(index.center());
+		for _ in 0..8 {
+			s.shoot();
+		}
+		assert!(s.app.index_open(), "the index button opens its panel");
+		s.click_at(index.center());
+		for _ in 0..8 {
+			s.shoot();
+		}
+
+		s.click_at(trash.center());
+		for _ in 0..12 {
+			s.shoot();
+		}
+		assert!(s.app.in_bin_for_tests(), "the trash button opens the bin tab");
+		assert!(lit(&s.shoot(), trash) > quiet_trash, "and it is lit while the bin stands");
+
+		s.click_at(help.center());
+		for _ in 0..12 {
+			s.shoot();
+		}
+		assert!(s.app.text_modes_for_tests().3, "the help button opens the help panel");
+		assert!(lit(&s.shoot(), help) > quiet_help, "and it is lit while the panel stands");
+	}
+
+	#[test]
 	fn the_menu_pastes_beside_the_folder_it_was_opened_on() {
 		let dir = std::env::temp_dir().join(format!("crabhop-menu-paste-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
