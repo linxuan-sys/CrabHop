@@ -1,20 +1,13 @@
 {
   "name": "crabhop",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "原生、键盘优先的 Linux 文件管理器",
   "license": "MIT",
   "repository": "github:linxuan-sys/CrabHop",
   "homepage": "https://github.com/linxuan-sys/CrabHop",
-  "bin": {
-    "crabhop": "bin/crabhop.js"
-  },
-  "optionalDependencies": {
-    "crabhop-linux-x64": "1.0.3"
-  },
-  "files": [
-    "bin/"
-  ],
-  "engines": {
-    "node": ">=18"
-  }
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "bin": { "crabhop": "bin/crabhop.js" },
+  "files": ["bin/", "vendor/"],
+  "engines": { "node": ">=18" }
 }
