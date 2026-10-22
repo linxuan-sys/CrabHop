@@ -1,6 +1,6 @@
 {
   "name": "crabhop-linux-x64",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "CrabHop 的 linux-x64 预编译二进制",
   "license": "MIT",
   "os": [

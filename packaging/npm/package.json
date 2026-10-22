@@ -1,6 +1,6 @@
 {
   "name": "crabhop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "原生、键盘优先的 Linux 文件管理器",
   "license": "MIT",
   "repository": "github:linxuan-sys/CrabHop",
@@ -9,7 +9,7 @@
     "crabhop": "bin/crabhop.js"
   },
   "optionalDependencies": {
-    "crabhop-linux-x64": "1.0.1"
+    "crabhop-linux-x64": "1.0.2"
   },
   "files": [
     "bin/"
