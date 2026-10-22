@@ -464,6 +464,31 @@ enum WheelOwner {
 	List,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Hunt {
+	Off,
+	Typing,
+	Locked,
+}
+
+#[derive(Clone, Copy)]
+enum HuntKey {
+	Open,
+	Enter,
+	Escape,
+}
+
+impl Hunt {
+	fn next(self, key: HuntKey) -> Self {
+		match (self, key) {
+			(_, HuntKey::Escape) => Self::Off,
+			(Self::Typing, HuntKey::Enter) => Self::Locked,
+			(Self::Off | Self::Locked, HuntKey::Open) => Self::Typing,
+			_ => self,
+		}
+	}
+}
+
 impl App {
 	pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Self {
 		let tokens = Tokens::theme();
@@ -1010,19 +1035,45 @@ impl App {
 	}
 
 	fn filter_open(&mut self) {
-		if self.tab().filter.is_some() && self.filter.is_none() {
-			self.tab_mut().filter = None;
-			self.refresh_view();
-			self.clamp();
-			return;
+		if self.filter_state().next(HuntKey::Open) == Hunt::Typing {
+			let text = self.tab().filter.clone().unwrap_or_default();
+			self.filter = Some(Edit::new(text));
 		}
+	}
 
-		let current = self.tab().filter.clone().unwrap_or_default();
-		self.filter = Some(Edit::new(current));
+	fn filter_state(&self) -> Hunt {
+		if self.filter.is_some() {
+			Hunt::Typing
+		} else if self.tab().filter.is_some() {
+			Hunt::Locked
+		} else {
+			Hunt::Off
+		}
+	}
+
+	fn find_state(&self) -> Hunt {
+		if self.find.is_some() {
+			Hunt::Typing
+		} else if self.find_last.is_some() {
+			Hunt::Locked
+		} else {
+			Hunt::Off
+		}
+	}
+
+	fn close_hunts(&mut self) {
+		if self.filter_state() == Hunt::Locked {
+			self.filter_apply(None);
+		}
+		if self.find_state() == Hunt::Locked {
+			self.find_last = None;
+		}
 	}
 
 	fn find_open(&mut self) {
-		self.find = Some(Edit::new(self.find_last.clone().unwrap_or_default()));
+		if self.find_state().next(HuntKey::Open) == Hunt::Typing {
+			self.find = Some(Edit::new(self.find_last.clone().unwrap_or_default()));
+		}
 	}
 
 	fn find_pattern(&self) -> Option<String> {
@@ -1570,6 +1621,7 @@ impl App {
 		if self.prompt.take().is_some() {
 			return;
 		}
+		self.close_hunts();
 		if !self.selection.is_empty() {
 			self.selection.clear();
 		}
@@ -2534,38 +2586,35 @@ impl App {
 	}
 
 	fn find_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
-		let mut close = false;
-		let mut keep = None;
+		let mut state = Hunt::Typing;
 
 		for event in events {
 			let egui::Event::Key { key, pressed: true, modifiers, .. } = event else { continue };
 
 			match key {
-				Key::Escape => {
-					close = true;
-					keep = Some(None);
-				}
-				Key::Enter => {
-					close = true;
-					keep = Some(self.find.as_ref().map(|edit| edit.text.clone()).filter(|text| !text.is_empty()));
-				}
+				Key::Escape => state = state.next(HuntKey::Escape),
+				Key::Enter => state = state.next(HuntKey::Enter),
 				_ => {
-					if let Some(edit) = &mut self.find {
+					if state == Hunt::Typing
+						&& let Some(edit) = &mut self.find
+					{
 						edit.key(*key, *modifiers);
 					}
 				}
 			}
 		}
 
-		if let Some(edit) = &mut self.find
+		if state == Hunt::Typing
 			&& !typed.is_empty()
+			&& let Some(edit) = &mut self.find
 		{
 			edit.type_text(typed);
 		}
 
-		if close {
+		if state != Hunt::Typing {
+			let pattern = self.find.as_ref().map(|edit| edit.text.clone()).filter(|text| !text.is_empty());
 			self.find = None;
-			self.find_last = keep.flatten();
+			self.find_last = if state == Hunt::Locked { pattern } else { None };
 		}
 		ctx.request_repaint();
 	}
@@ -3329,6 +3378,7 @@ impl App {
 				self.which_at = None;
 				self.toasts.clear();
 				self.selection.clear();
+				self.close_hunts();
 				continue;
 			}
 
@@ -3424,45 +3474,37 @@ impl App {
 	}
 
 	fn filter_keys(&mut self, events: &[egui::Event], typed: &str, ctx: &Context) {
-		let mut closed = false;
-		let mut kept = None;
+		let mut state = Hunt::Typing;
 
 		for event in events {
 			let egui::Event::Key { key, pressed: true, modifiers, .. } = event else { continue };
 
 			match key {
-				Key::Escape => {
-					closed = true;
-					kept = Some(None);
-				}
-				Key::Enter => {
-					closed = true;
-					kept = Some(self.filter.as_ref().map(|edit| edit.text.clone()).filter(|text| !text.is_empty()));
-				}
-				Key::F if !modifiers.ctrl && !modifiers.alt && typed.is_empty() => {
-					closed = true;
-					kept = Some(None);
-				}
+				Key::Escape => state = state.next(HuntKey::Escape),
+				Key::Enter => state = state.next(HuntKey::Enter),
 				_ => {
-					if let Some(edit) = &mut self.filter {
+					if state == Hunt::Typing
+						&& let Some(edit) = &mut self.filter
+					{
 						edit.key(*key, *modifiers);
 					}
 				}
 			}
 		}
 
-		if !typed.is_empty()
+		if state == Hunt::Typing
+			&& !typed.is_empty()
 			&& let Some(edit) = &mut self.filter
 		{
 			edit.type_text(typed);
 		}
 
 		let pattern = self.filter.as_ref().map(|edit| edit.text.clone()).filter(|text| !text.is_empty());
-		self.filter_apply(pattern);
-
-		if closed {
+		if state == Hunt::Typing {
+			self.filter_apply(pattern);
+		} else {
 			self.filter = None;
-			self.filter_apply(kept.flatten());
+			self.filter_apply(if state == Hunt::Locked { pattern } else { None });
 		}
 
 		ctx.request_repaint();
@@ -6867,6 +6909,16 @@ impl App {
 	}
 
 	#[cfg_attr(not(test), allow(dead_code))]
+	pub(crate) fn filter_pattern_for_tests(&self) -> Option<String> {
+		self.tab().filter.clone()
+	}
+
+	#[cfg_attr(not(test), allow(dead_code))]
+	pub(crate) fn find_pattern_for_tests(&self) -> Option<String> {
+		self.find_pattern()
+	}
+
+	#[cfg_attr(not(test), allow(dead_code))]
 	pub(crate) fn fuzzy_query_for_tests(&self) -> Option<String> {
 		self.fuzzy.as_ref().map(|fuzzy| fuzzy.query.text.clone())
 	}
@@ -7429,6 +7481,20 @@ mod query_tests {
 		assert_eq!(index_door(Key::A, false), None, "`a` is a search word now");
 		assert_eq!(index_door(Key::A, true), None, "and so is `A`");
 		assert_eq!(index_door(Key::Enter, false), None, "Enter is the panel's own, not a door here");
+	}
+
+	#[test]
+	fn both_hunts_lock_on_enter_close_on_escape_and_reopen_from_locked() {
+		use Hunt::{ Locked, Off, Typing };
+		use HuntKey::{ Enter, Escape, Open };
+
+		assert_eq!(Off.next(Open), Typing);
+		assert_eq!(Typing.next(Enter), Locked, "Enter locks, the box folds away");
+		assert_eq!(Locked.next(Open), Typing, "f or / reopens it");
+		assert_eq!(Typing.next(Escape), Off);
+		assert_eq!(Locked.next(Escape), Off, "Escape always leaves the mode");
+		assert_eq!(Locked.next(Enter), Locked);
+		assert_eq!(Off.next(Escape), Off);
 	}
 
 	#[test]

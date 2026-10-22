@@ -2628,6 +2628,181 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	}
 
 	#[test]
+	fn the_filter_locks_on_enter_and_esc_lifts_it() {
+		let root = std::env::temp_dir().join(format!("crabhop-filter-lock-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&root);
+		std::fs::create_dir_all(&root).expect("a sandbox");
+		for name in [ "alpha.txt", "beta.txt", "gamma.md" ] {
+			std::fs::write(root.join(name), b"x").expect("a file");
+		}
+
+		let mut s = session(vec![ format!("reveal {}", root.join("alpha.txt").display()) ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.cwd_for_tests() == root && s.app.listed() == 3 {
+				break;
+			}
+		}
+		assert_eq!(s.app.cwd_for_tests(), root);
+		assert_eq!(s.app.listed(), 3);
+
+		s.app.rehearse(vec![ "key f".to_owned(), "type al".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.filter_text().as_deref() == Some("al") && s.app.listed() == 1 {
+				break;
+			}
+		}
+		assert_eq!(s.app.filter_text().as_deref(), Some("al"));
+		assert_eq!(s.app.listed(), 1, "the list follows the typing");
+
+		s.app.rehearse(vec![ "key Enter".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.filter_text().is_none() {
+				break;
+			}
+		}
+		assert!(s.app.filter_text().is_none(), "Enter folds the box away");
+		assert_eq!(s.app.filter_pattern_for_tests().as_deref(), Some("al"));
+		assert_eq!(s.app.listed(), 1, "the filter still holds");
+
+		s.app.rehearse(vec![ "key f".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.filter_text().is_some() {
+				break;
+			}
+		}
+		assert_eq!(s.app.filter_text().as_deref(), Some("al"), "f brings the box back with its text");
+		assert_eq!(s.app.listed(), 1);
+
+		s.app.rehearse(vec![ "key Esc".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.listed() == 3 {
+				break;
+			}
+		}
+		assert_eq!(s.app.listed(), 3, "Escape lifts the filter");
+		assert_eq!(s.app.filter_pattern_for_tests(), None);
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	#[test]
+	fn the_find_locks_on_enter_and_esc_clears_the_highlight() {
+		let root = std::env::temp_dir().join(format!("crabhop-find-lock-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&root);
+		std::fs::create_dir_all(&root).expect("a sandbox");
+		for name in [ "alpha.txt", "beta.txt", "gamma.md" ] {
+			std::fs::write(root.join(name), b"x").expect("a file");
+		}
+
+		let mut s = session(vec![ format!("reveal {}", root.join("alpha.txt").display()) ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.cwd_for_tests() == root && s.app.listed() == 3 {
+				break;
+			}
+		}
+		assert_eq!(s.app.cwd_for_tests(), root);
+		assert_eq!(s.app.listed(), 3);
+
+		let accent = Tokens::MOCHA.accent;
+		let count = |image: &egui::ColorImage, rect: egui::Rect| -> usize {
+			let mut n = 0;
+			for y in (rect.min.y.max(0.0) as usize)..(rect.max.y.min(image.size[1] as f32) as usize) {
+				for x in (rect.min.x.max(0.0) as usize)..(rect.max.x.min(image.size[0] as f32) as usize) {
+					if image.pixels[y * image.size[0] + x] == accent {
+						n += 1;
+					}
+				}
+			}
+			n
+		};
+		let (body, shares) = s.app.layout();
+		let column = chrome::columns(body, shares).current;
+		let list = egui::Rect::from_min_max(egui::pos2(column.min.x, body.min.y), egui::pos2(column.max.x, body.min.y + 220.0));
+		let baseline = count(&s.shoot(), list);
+
+		s.app.rehearse(vec![ "key /".to_owned(), "type al".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.find_open_for_tests() && s.app.find_pattern_for_tests().as_deref() == Some("al") {
+				break;
+			}
+		}
+		assert!(s.app.find_open_for_tests(), "the box opened");
+		assert_eq!(s.app.find_pattern_for_tests().as_deref(), Some("al"));
+
+		s.app.rehearse(vec![ "key Enter".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if !s.app.find_open_for_tests() {
+				break;
+			}
+		}
+		assert!(!s.app.find_open_for_tests(), "Enter folds the box away");
+		assert_eq!(s.app.find_pattern_for_tests().as_deref(), Some("al"));
+		let locked = s.shoot();
+		assert!(count(&locked, list) > baseline, "the matches stay coloured");
+
+		s.app.rehearse(vec![ "key /".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.find_open_for_tests() {
+				break;
+			}
+		}
+		assert_eq!(s.app.find_pattern_for_tests().as_deref(), Some("al"), "/ brings the box back with its text");
+
+		s.app.rehearse(vec![ "key Esc".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.find_pattern_for_tests().is_none() {
+				break;
+			}
+		}
+		assert!(!s.app.find_open_for_tests(), "escaping the box closes it");
+		assert_eq!(s.app.find_pattern_for_tests(), None);
+		assert_eq!(count(&s.shoot(), list), baseline, "the highlight is gone");
+
+		s.app.rehearse(vec![ "key /".to_owned(), "type al".to_owned(), "key Enter".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if !s.app.find_open_for_tests() && s.app.find_pattern_for_tests().as_deref() == Some("al") {
+				break;
+			}
+		}
+		assert_eq!(s.app.find_pattern_for_tests().as_deref(), Some("al"));
+
+		s.app.rehearse(vec![ "key Esc".to_owned() ]);
+		for _ in 0..120 {
+			std::thread::sleep(Duration::from_millis(16));
+			s.shoot();
+			if s.app.find_pattern_for_tests().is_none() {
+				break;
+			}
+		}
+		assert_eq!(s.app.find_pattern_for_tests(), None, "Escape leaves a locked find too");
+		assert_eq!(count(&s.shoot(), list), baseline, "and the highlight is gone");
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	#[test]
 	fn a_headless_frame_holds_the_columns_and_the_status_bar() {
 		let mut session = session(Vec::new());
 
