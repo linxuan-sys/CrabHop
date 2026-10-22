@@ -16,7 +16,7 @@ trap 'rm -rf "$stage"' EXIT
 
 # One top-level directory inside the tarball: unpacking must never scatter files into whatever
 # directory the person happens to stand in (P45 — the flat first take did exactly that).
-root="$stage/crabhop-1.0.0"
+root="$stage/crabhop-1.0.3"
 mkdir -p "$root"
 
 bin="$here/target/release/crabhop"
@@ -38,6 +38,6 @@ for name in LICENSE NOTICE LICENSE-ICONS; do
 done
 install -m644 "$here/assets/fonts/LICENSE-MapleMono.txt" "$root/LICENSE-MapleMono.txt"
 
-tar -C "$stage" -cJf "$out" crabhop-1.0.0
+tar -C "$stage" -cJf "$out" crabhop-1.0.3
 ls -l "$out"
 sha256sum "$out"
