@@ -10,13 +10,14 @@
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-out=${1:-$here/target/crabhop-1.0.0-linux-x86_64.tar.xz}
+version=${CRABHOP_VERSION:-1.0.3}
+out=${1:-$here/target/crabhop-$version-linux-x86_64.tar.xz}
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 
 # One top-level directory inside the tarball: unpacking must never scatter files into whatever
 # directory the person happens to stand in (P45 — the flat first take did exactly that).
-root="$stage/crabhop-1.0.3"
+root="$stage/crabhop-$version"
 mkdir -p "$root"
 
 bin="$here/target/release/crabhop"
@@ -38,6 +39,6 @@ for name in LICENSE NOTICE LICENSE-ICONS; do
 done
 install -m644 "$here/assets/fonts/LICENSE-MapleMono.txt" "$root/LICENSE-MapleMono.txt"
 
-tar -C "$stage" -cJf "$out" crabhop-1.0.3
+tar -C "$stage" -cJf "$out" "crabhop-$version"
 ls -l "$out"
 sha256sum "$out"
