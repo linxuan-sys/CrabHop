@@ -272,7 +272,7 @@ pub(crate) fn tree(items: &[Item], collapsed: &HashSet<String>, tokens: &Tokens)
 			let (glyph, colour) = if item.dir {
 				(if collapsed.contains(&item.path) { "▸" } else { "▾" }, tokens.blue)
 			} else {
-				list::icon_for(&item.name, false, false, tokens)
+				list::icon_for(&item.name, false, false, false, false, tokens)
 			};
 			let indent = BASE + item.depth.saturating_sub(1) as f32 * INDENT + advance(SIZE) + ICON_BOX * 0.5;
 

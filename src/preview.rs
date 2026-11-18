@@ -1273,7 +1273,7 @@ impl PreviewPane {
 	fn draw_media(&self, painter: &Painter, content: Rect, facts: &[(String, String)], tokens: &Tokens) {
 		let Some(path) = self.path.as_deref() else { return };
 		let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-		let (glyph, colour) = list::icon_for(&name, false, false, tokens);
+		let (glyph, colour) = list::icon_for(&name, false, false, false, false, tokens);
 		let middle = content.center().x;
 		let top = content.center().y - 24.0 - facts.len() as f32 * 10.0;
 
@@ -1309,7 +1309,7 @@ impl PreviewPane {
 			use std::os::unix::fs::PermissionsExt;
 			meta.permissions().mode() & 0o111 != 0
 		});
-		let (glyph, colour) = list::icon_for(&name, false, exec, tokens);
+		let (glyph, colour) = list::icon_for(&name, false, exec, false, false, tokens);
 		let middle = rect.center().x;
 
 		painter.text(
@@ -1586,7 +1586,7 @@ fn dir_doc(entries: &[Entry], tokens: &Tokens) -> (Doc, bool) {
 }
 
 fn dir_row(entry: &Entry, tokens: &Tokens) -> Row {
-	let (glyph, colour) = list::icon_for(&entry.name, entry.dir, entry.mode.is_some_and(|mode| mode & 0o111 != 0), tokens);
+	let (glyph, colour) = list::icon_for(&entry.name, entry.dir, entry.mode.is_some_and(|mode| mode & 0o111 != 0), entry.link, entry.orphan, tokens);
 
 	Row {
 		text: entry.name.clone(),
@@ -2264,8 +2264,8 @@ mod tests {
 	fn a_directory_listing_wears_the_lists_rows() {
 		let tokens = Tokens::MOCHA;
 		let entries = vec![
-			Entry { name: "sub".to_owned(), size: 4096, modified: None, dir: true, mode: None, link: false , created: None, uid: 0 },
-			Entry { name: "note.txt".to_owned(), size: 5, modified: None, dir: false, mode: None, link: false , created: None, uid: 0 },
+			Entry { name: "sub".to_owned(), size: 4096, modified: None, dir: true, mode: None, link: false , orphan: false, created: None, uid: 0 },
+			Entry { name: "note.txt".to_owned(), size: 5, modified: None, dir: false, mode: None, link: false , orphan: false, created: None, uid: 0 },
 		];
 
 		let (doc, truncated) = dir_doc(&entries, &tokens);
@@ -2313,7 +2313,7 @@ mod tests {
 	}
 
 	fn dir_entry() -> Entry {
-		Entry { name: "dir".to_owned(), size: 0, modified: None, dir: true, mode: None, link: false , created: None, uid: 0 }
+		Entry { name: "dir".to_owned(), size: 0, modified: None, dir: true, mode: None, link: false , orphan: false, created: None, uid: 0 }
 	}
 
 	#[test]

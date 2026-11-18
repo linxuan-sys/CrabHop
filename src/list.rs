@@ -33,11 +33,11 @@ pub(crate) fn clipped(name: &str, cells: u32) -> &str {
 }
 
 pub(crate) fn icon(entry: &Entry, tokens: &Tokens) -> (&'static str, Color32) {
-	icon_for(&entry.name, entry.dir, entry.mode.is_some_and(|mode| mode & 0o111 != 0), tokens)
+	icon_for(&entry.name, entry.dir, entry.mode.is_some_and(|mode| mode & 0o111 != 0), entry.link, entry.orphan, tokens)
 }
 
-pub(crate) fn icon_for(name: &str, dir: bool, exec: bool, tokens: &Tokens) -> (&'static str, Color32) {
-	if let Some((glyph, colour)) = crate::icons::lookup(name, dir) {
+pub(crate) fn icon_for(name: &str, dir: bool, exec: bool, link: bool, orphan: bool, tokens: &Tokens) -> (&'static str, Color32) {
+	if let Some((glyph, colour)) = crate::icons::lookup(name, dir, exec, link, orphan) {
 		return (glyph, colour);
 	}
 	if dir {
@@ -207,35 +207,35 @@ mod tests {
 	#[test]
 	fn the_type_colours_follow_the_filetype_rules() {
 		let tokens = Tokens::MOCHA;
-		let colour = |name: &str, dir: bool, exec: bool| icon_for(name, dir, exec, &tokens).1;
-		let glyph = |name: &str, dir: bool, exec: bool| icon_for(name, dir, exec, &tokens).0;
+		let colour = |name: &str, dir: bool, exec: bool| icon_for(name, dir, exec, false, false, &tokens).1;
+		let glyph = |name: &str, dir: bool, exec: bool| icon_for(name, dir, exec, false, false, &tokens).0;
 
-		assert_eq!(colour("歌.mp3", false, false), crate::icons::colour(0x00afff), "audio: yazi's own blue");
-		assert_eq!(colour("片子.mp4", false, false), crate::icons::colour(0xfd971f), "video: yazi's own orange");
-		assert_eq!(colour("图.png", false, false), crate::icons::colour(0xa074c4), "images: yazi's own violet");
-		assert_eq!(colour("图.avif", false, false), colour("图.png", false, false), "the picture family shares it");
-		assert_eq!(colour("档.zip", false, false), crate::icons::colour(0xeca517), "archives: yazi's own amber");
-		assert_eq!(colour("档.tar.zst", false, false), colour("档.zip", false, false), "and the archive family too");
+		assert_eq!(colour("歌.mp3", false, false), crate::icons::colour(0xd1bfe7), "audio: the standard's mauve");
+		assert_eq!(colour("片子.mp4", false, false), crate::icons::colour(0xd1bfe7), "video: the standard's mauve");
+		assert_eq!(colour("图.png", false, false), crate::icons::colour(0xd1bfe7), "images: the standard's mauve");
+		assert_eq!(colour("图.avif", false, false), crate::icons::colour(0xa074c4), "what the standard does not claim stays yazi's violet");
+		assert_eq!(colour("档.zip", false, false), crate::icons::colour(0xd1bfe7), "archives: the standard's mauve");
+		assert_eq!(colour("档.tar.zst", false, false), crate::icons::colour(0xeca517), "and the archive tail stays yazi's amber");
 		assert_eq!(colour("文.pdf", false, false), crate::icons::colour(0xb30b00), "documents: yazi's own red");
 		assert_eq!(colour("文.docx", false, false), crate::icons::colour(0x185abd));
-		assert_eq!(colour("本.rs", false, false), crate::icons::colour(0xdea584), "code, yazi's own tan (P34)");
-		assert_eq!(colour("谜.zzz", false, false), tokens.subtext, "what the table does not know is plain");
+		assert_eq!(colour("本.rs", false, false), crate::icons::colour(0x99ccfa), "code: the standard's blue");
+		assert_eq!(colour("谜.zzz", false, false), tokens.subtext, "what no table knows is plain");
 		assert_eq!(colour(".gitignore", false, false), crate::icons::colour(0xf54d27), "a name's own colour");
 		assert_eq!(colour("字体.ttf", false, false), crate::icons::colour(0xececec), "and a font's");
 
-		assert_eq!(colour("脚本.sh", false, true), crate::icons::colour(0x4d5a5e), "the table first");
-		assert_eq!(colour("bin/thing", false, true), tokens.ok, "no extension, so the rule: executable green");
-		assert_eq!(colour("图.png", false, true), crate::icons::colour(0xa074c4), "a picture keeps the picture's face");
-		assert_eq!(colour("目录", true, true), tokens.blue, "a directory is a directory");
-		assert_eq!(colour("下载", true, false), tokens.blue, "and one the table does not name keeps the folder's face");
+		assert_eq!(colour("脚本.sh", false, true), crate::icons::colour(0x99ccfa), "the standard's extension first");
+		assert_eq!(colour("bin/thing", false, true), crate::icons::colour(0xb8c8da), "no extension, so the standard's exec cond");
+		assert_eq!(colour("图.png", false, true), crate::icons::colour(0xd1bfe7), "a picture keeps the picture's face");
+		assert_eq!(colour("目录", true, true), crate::icons::colour(0x99ccfa), "a directory is a directory");
+		assert_eq!(colour("下载", true, false), crate::icons::colour(0x99ccfa), "and one no table names keeps the folder's face");
 
-		assert_eq!(glyph("歌.mp3", false, false), "\u{f001}", "audio: the table's own notes");
-		assert_eq!(glyph("片子.mp4", false, false), "\u{e69f}", "video: the table's own film");
-		assert_eq!(glyph("本.rs", false, false), "\u{e68b}", "code: the language's own face, yazi's own table");
+		assert_eq!(glyph("歌.mp3", false, false), "\u{f0386}", "audio: the standard's own notes");
+		assert_eq!(glyph("片子.mp4", false, false), "\u{f0567}", "video: the standard's own film");
+		assert_eq!(glyph("本.rs", false, false), "\u{e68b}", "code: the language's own face");
 		assert_eq!(glyph("本.py", false, false), "\u{e606}", "and another language, another face");
 		assert_eq!(glyph("Cargo.toml", false, false), glyph("别的.toml", false, false), "the extension answers for both");
 		assert_eq!(glyph(".gitignore", false, false), "\u{e702}", "a name yazi knows by heart");
-		assert_eq!(glyph("谜.zzz", false, false), "\u{f15b}", "and what the table does not know keeps the generic face");
+		assert_eq!(glyph("谜.zzz", false, false), "\u{f15b}", "and what no table knows keeps the generic face");
 	}
 
 	#[test]

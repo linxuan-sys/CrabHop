@@ -736,7 +736,8 @@ impl App {
 			Action::Top if self.in_bin() => self.bin_seat(0),
 			Action::Bottom if self.in_bin() => self.bin_seat(usize::MAX),
 			Action::Page { full, back } if self.in_bin() => self.bin_page(full, back),
-			Action::Enter if self.in_bin() => self.trash_restore_standing(),
+			Action::Rename(_) if self.in_bin() => self.trash_restore_standing(),
+			Action::Enter if self.in_bin() => {}
 			Action::Remove(_) if self.in_bin() => self.trash_purge_standing(),
 			Action::Up => self.set_cursor(self.cursor().saturating_sub(1)),
 			Action::Down => self.set_cursor((self.cursor() + 1).min(len.saturating_sub(1))),
@@ -5484,7 +5485,7 @@ impl App {
 			}
 
 			let name = item.name.to_string_lossy();
-			let (glyph, colour) = list::icon_for(&name, items.dirs.get(i).copied().unwrap_or(false), false, &tokens);
+			let (glyph, colour) = list::icon_for(&name, items.dirs.get(i).copied().unwrap_or(false), false, false, false, &tokens);
 			clipped.text(
 				pos2(row.min.x + advance + ICON_BOX * 0.5, row.center().y),
 				Align2::CENTER_CENTER,
@@ -5569,7 +5570,7 @@ impl App {
 		painter.text(
 			pos2(rect.min.x + 12.0 + cells("回收站  ", FONT_SMALL * 0.62), rect.center().y),
 			Align2::LEFT_CENTER,
-			"Enter 恢复 · D 永久删除 · C 清空 · 导航即离开本页",
+			"R 恢复 · D 永久删除 · C 清空 · 导航即离开本页",
 			small.clone(),
 			tokens.subtext,
 		);
@@ -6127,7 +6128,7 @@ impl App {
 		let Some(path) = self.selected() else { return };
 		let entry = self.selected_entry();
 		let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-		let (glyph, colour) = list::icon_for(&name, entry.as_ref().is_some_and(|e| e.dir), entry.as_ref().and_then(|e| e.mode).is_some_and(|mode| mode & 0o111 != 0), &tokens);
+		let (glyph, colour) = list::icon_for(&name, entry.as_ref().is_some_and(|e| e.dir), entry.as_ref().and_then(|e| e.mode).is_some_and(|mode| mode & 0o111 != 0), entry.as_ref().is_some_and(|e| e.link), entry.as_ref().is_some_and(|e| e.orphan), &tokens);
 
 		let shown_width = self.preview.shown_physical(&path).map(|shown| shown[0]).or_else(|| self.preview.fit_width_pixels());
 		let rows = match crate::spot::rows(&path, shown_width) {
@@ -6765,6 +6766,7 @@ fn entry_of(path: &Path) -> Option<Entry> {
 	use std::os::unix::fs::PermissionsExt;
 
 	let meta = std::fs::symlink_metadata(path).ok()?;
+	let link = meta.file_type().is_symlink();
 
 	Some(Entry {
 		name:     path.file_name().map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
@@ -6772,7 +6774,8 @@ fn entry_of(path: &Path) -> Option<Entry> {
 		modified: meta.modified().ok(),
 		dir:      meta.is_dir(),
 		mode:     Some(meta.permissions().mode()),
-		link:     meta.file_type().is_symlink(),
+		link,
+		orphan:   link && std::fs::metadata(path).is_err(),
 		created:  meta.created().ok(),
 		uid:      {
 			use std::os::unix::fs::MetadataExt;
@@ -7302,6 +7305,7 @@ mod order_tests {
 			dir,
 			mode: Some(0o644),
 			link: false,
+			orphan: false,
 			created: None,
 			uid: 0,
 		}
@@ -7431,7 +7435,7 @@ mod sort_tests {
 	use super::*;
 
 	fn entry(name: &str) -> Entry {
-		Entry { name: name.to_owned(), size: 0, modified: None, dir: false, mode: None, link: false , created: None, uid: 0 }
+		Entry { name: name.to_owned(), size: 0, modified: None, dir: false, mode: None, link: false , orphan: false, created: None, uid: 0 }
 	}
 
 	fn names(view: &[usize], entries: &[Entry]) -> Vec<String> {
@@ -7574,6 +7578,7 @@ mod query_tests {
 				dir:      false,
 				mode:     None,
 				link:     false,
+				orphan:   false,
 				created:  None,
 				uid:      0,
 			})
@@ -7680,7 +7685,7 @@ mod bypass_tests {
 	use super::*;
 
 	fn entry(name: &str, dir: bool) -> Entry {
-		Entry { name: name.to_owned(), size: 0, modified: None, dir, mode: None, link: false , created: None, uid: 0 }
+		Entry { name: name.to_owned(), size: 0, modified: None, dir, mode: None, link: false , orphan: false, created: None, uid: 0 }
 	}
 
 	#[test]

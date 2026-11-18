@@ -20,6 +20,7 @@ pub(crate) struct Entry {
 	pub dir:      bool,
 	pub mode:     Option<u32>,
 	pub link:     bool,
+	pub orphan:   bool,
 	pub created:  Option<SystemTime>,
 	pub uid:      u32,
 }
@@ -195,6 +196,7 @@ pub(crate) fn read_sync(path: &Path) -> Vec<Entry> {
 
 	for item in dir.flatten() {
 		let meta = std::fs::symlink_metadata(item.path()).ok();
+		let link = meta.as_ref().is_some_and(|m| m.file_type().is_symlink());
 
 		entries.push(Entry {
 			name:     item.file_name().to_string_lossy().into_owned(),
@@ -202,7 +204,8 @@ pub(crate) fn read_sync(path: &Path) -> Vec<Entry> {
 			modified: meta.as_ref().and_then(|m| m.modified().ok()),
 			dir:      meta.as_ref().is_some_and(|m| m.is_dir()),
 			mode:     mode_of(meta.as_ref()),
-			link:     meta.as_ref().is_some_and(|m| m.file_type().is_symlink()),
+			link,
+			orphan:   link && std::fs::metadata(item.path()).is_err(),
 			created:  meta.as_ref().and_then(|m| m.created().ok()),
 			uid:      uid_of(meta.as_ref()),
 		});
