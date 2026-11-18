@@ -42,8 +42,8 @@ CrabHop 是一个桌面文件管理器：左边是当前目录的父级、中间
 
 ### 拖拽
 
-- **拖出**：把文件行拖去别的程序（Nautilus、浏览器、微信……）。复制还是移动由接收方决定，
-  对方选了移动，原件自动清掉；Esc 取消
+- **拖出**：把文件行拖去别的程序（Nautilus、浏览器、微信、QQ……）。**默认只复制**，原件不动；
+  起拖时按住 `Shift` 才允许移动（对方选了移动，原件才清掉）；Esc 取消
 - **拖入**：别的程序拖文件进来，落到当前目录——空手是复制，按住 `Shift` 是移动，都能 `u` 撤回
 - **窗口内拖**：拖到目录行上松手即移动；悬停目录 1 秒自动进入（弹簧目录）；拖到左侧父列
   悬停 1 秒回到上一级；拖出窗口自动交接成桌面拖拽
@@ -233,8 +233,9 @@ replace whole.
 
 ### Drag and drop
 
-- **Out**: drag file rows into other programs (Nautilus, browsers, chat apps…). Copy or move is the
-  receiver's call; when it moves, the originals are cleaned up. Esc cancels
+- **Out**: drag file rows into other programs (Nautilus, browsers, chat apps…). **Copy by
+  default** — the originals stay put; hold `Shift` while starting the drag to allow a move (the
+  originals go once the receiver takes them). Esc cancels
 - **In**: drop files from other programs into the current directory — bare hands copy, `Shift`
   moves; both undo with `u`
 - **Inside the window**: drop on a directory row to move; hover a directory for a second to spring

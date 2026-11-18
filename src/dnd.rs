@@ -168,7 +168,7 @@ impl Dnd {
 
 	/// Hand paths to the compositor. Must run while the initiating left button is still
 	/// down — egui's drag_started() frame is exactly that moment.
-	pub(crate) fn start(&mut self, paths: Vec<PathBuf>, scale: f32) -> bool {
+	pub(crate) fn start(&mut self, paths: Vec<PathBuf>, scale: f32, move_ok: bool) -> bool {
 		if paths.is_empty() || self.state.drag.is_some() {
 			if debug() { eprintln!("dnd: start refused — empty={} busy={}", paths.is_empty(), self.state.drag.is_some()); }
 			return false;
@@ -186,7 +186,7 @@ impl Dnd {
 		let source = manager.create_data_source(&self.queue.handle(), ());
 		source.offer("text/uri-list".to_owned());
 		source.offer("text/plain;charset=utf-8".to_owned());
-		source.set_actions(DndAction::Copy | DndAction::Move);
+		source.set_actions(drag_actions(move_ok));
 		let icon = Icon::new(&self.state, &self.queue.handle(), (scale.round() as i32).max(1), many);
 		device.start_drag(Some(&source), &self.state.surface, icon.as_ref().map(|icon| &icon.surface), serial);
 		self.state.drag = Some(Drag { source, paths, uri_list, text, action: DndAction::empty(), icon, dropped_at: None });
@@ -594,6 +594,13 @@ fn debug() -> bool {
 	std::env::var_os("CRABHOP_DND_DEBUG").is_some()
 }
 
+/// Drag-out defaults to copy. A target that picks Move may still read the files long after
+/// dnd_finished (QQ does), so originals only ever leave when the person held Shift at the
+/// handoff — the same "shift means move" rule every file manager teaches.
+fn drag_actions(move_ok: bool) -> DndAction {
+	if move_ok { DndAction::Copy | DndAction::Move } else { DndAction::Copy }
+}
+
 /// The whole move decision: the target negotiated Move and the drop finished, so the
 /// originals are duplicates now. Copy or cancel leaves them alone.
 fn finish(action: DndAction, paths: Vec<PathBuf>) -> Outcome {
@@ -653,6 +660,12 @@ fn hex(b: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn a_drag_out_offers_move_only_when_shift_was_held() {
+		assert_eq!(drag_actions(false), DndAction::Copy, "the default target can only copy — a late reader never loses the original");
+		assert!(drag_actions(true).contains(DndAction::Move), "shift opens the move door");
+	}
 
 	#[test]
 	fn a_finished_move_hands_back_the_originals() {

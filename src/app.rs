@@ -2656,8 +2656,9 @@ impl App {
 			self.idrag_up = None;
 			let count = drag.paths.len();
 			let scale = ctx.pixels_per_point();
-			if self.dnd.as_mut().is_some_and(|dnd| dnd.start(drag.paths, scale)) {
-				self.toasts.push(format!("拖出 {count} 项（松开即落到目标程序）"), toast::Kind::Ok);
+			let move_ok = ctx.input(|i| i.modifiers.shift);
+			if self.dnd.as_mut().is_some_and(|dnd| dnd.start(drag.paths, scale, move_ok)) {
+				self.toasts.push(format!("拖出 {count} 项（{}松开即落到目标程序）", if move_ok { "Shift 移动，" } else { "" }), toast::Kind::Ok);
 			} else {
 				self.toasts.push("拖出未启动（CRABHOP_DND_DEBUG=1 可看原因）", toast::Kind::Warn);
 			}
