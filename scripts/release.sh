@@ -37,7 +37,12 @@ git tag -f "v$version"
 git push -f origin "v$version"
 
 echo "== 5/6 建 GitHub Release 并上传安装包"
-: "${GITHUB_TOKEN:?需要 GITHUB_TOKEN 环境变量}"
+# gh 登录着就自己借 token，省得每次记得 export
+if [ -z "${GITHUB_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
+	GITHUB_TOKEN=$(gh auth token 2>/dev/null || true)
+	export GITHUB_TOKEN
+fi
+: "${GITHUB_TOKEN:?需要 GITHUB_TOKEN（export 一个，或先 gh auth login）}"
 release=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" \
 	-d "{\"tag_name\":\"v$version\",\"name\":\"v$version\",\"body\":\"CrabHop $version\"}" \
 	https://api.github.com/repos/linxuan-sys/CrabHop/releases)
