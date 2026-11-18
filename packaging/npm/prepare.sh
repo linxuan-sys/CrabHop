@@ -5,10 +5,10 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/../.." && pwd)
 bin="$root/target/release/crabhop"
 [ -x "$bin" ] || { echo "先编译：cargo build --release" >&2; exit 1; }
-mkdir -p "$here/vendor"
-cp "$bin" "$here/vendor/crabhop"
-chmod 755 "$here/vendor/crabhop"
-ls -lh "$here/vendor/crabhop"
+mkdir -p "$here/platform-linux-x64/bin"
+cp "$bin" "$here/platform-linux-x64/bin/crabhop"
+chmod 755 "$here/platform-linux-x64/bin/crabhop"
+ls -lh "$here/platform-linux-x64/bin/crabhop"
 
 # 桌面入口 + 图标随包走：postinstall 立刻注册，preuninstall 清掉
 mkdir -p "$here/share/icons"
