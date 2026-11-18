@@ -47,8 +47,10 @@ curl -sS --http1.1 --retry 3 -X POST -H "Authorization: token $GITHUB_TOKEN" -H 
 	"https://uploads.github.com/repos/linxuan-sys/CrabHop/releases/$id/assets?name=crabhop-$version-linux-x86_64.tar.xz" >/dev/null
 echo "   release: https://github.com/linxuan-sys/CrabHop/releases/tag/v$version"
 
-echo "== 6/6 发 npm（会弹浏览器，各点一次授权）"
-(cd packaging/npm/platform-linux-x64 && npm publish --registry=https://registry.npmjs.org)
-(cd packaging/npm && npm publish --registry=https://registry.npmjs.org)
+echo "== 6/6 发 npm（先登录官方源，再发；~/.npmrc 的镜像源发不了 npmjs 的包）"
+NPMJS=https://registry.npmjs.org
+npm login --registry="$NPMJS"
+(cd packaging/npm/platform-linux-x64 && npm publish --registry="$NPMJS")
+(cd packaging/npm && npm publish --registry="$NPMJS")
 
 echo "== 完成：v$version"

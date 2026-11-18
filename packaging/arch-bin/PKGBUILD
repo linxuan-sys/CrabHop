@@ -3,7 +3,7 @@
 # 但用户机器不需要 Rust 工具链——直接解 GitHub Release 的安装包。
 # 发到 AUR 时包名 crabhop-bin，与源码包 crabhop 互斥（provides/conflicts）。
 pkgname=crabhop-bin
-pkgver=1.0.3
+pkgver=1.0.4
 pkgrel=1
 pkgdesc='Native, keyboard-first file manager — three columns, a preview stack, and a headless harness (prebuilt binary)'
 arch=('x86_64')
@@ -30,7 +30,7 @@ optdepends=(
 provides=('crabhop')
 conflicts=('crabhop')
 source=("https://github.com/linxuan-sys/CrabHop/releases/download/v$pkgver/crabhop-$pkgver-linux-x86_64.tar.xz")
-sha256sums=('0d994160d91899d77957376d3fc1cabf7cbdde7a0e4049805cf17a9dcd76e23a')
+sha256sums=('fdd0e7f4cfcc1c61ae0947a74a423cd82d595dfa659046eb7b80eea673dda5e2')
 
 package() {
 	cd "crabhop-$pkgver"
