@@ -70,7 +70,7 @@ desc = "回收站"
 [[keys]]
 on   = [ "g", "<Space>" ]
 run  = "cd --interactive"
-desc = "交互式目录"
+desc = "索引"
 
 [[keys]]
 on   = [ "g", "f" ]
@@ -155,7 +155,7 @@ desc = "快捷键列表（交互式：浏览/搜索/回车执行）"
 [[keys]]
 on   = "r"
 run  = "rename --cursor=before_ext"
-desc = "重命名（同双击；回收站中为恢复）"
+desc = "重命名（回收站中为恢复）"
 
 [[keys]]
 on   = "d"
@@ -166,6 +166,11 @@ desc = "移动到回收站"
 on   = "D"
 run  = "remove --permanently"
 desc = "永久删除"
+
+[[keys]]
+on   = "<Delete>"
+run  = "remove"
+desc = "移动到回收站（同 d）"
 
 [[keys]]
 on   = "a"

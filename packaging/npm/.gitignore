@@ -1,3 +1,4 @@
 vendor/
+share/
 *.tgz
 node_modules/

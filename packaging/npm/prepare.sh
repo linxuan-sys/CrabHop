@@ -9,3 +9,11 @@ mkdir -p "$here/vendor"
 cp "$bin" "$here/vendor/crabhop"
 chmod 755 "$here/vendor/crabhop"
 ls -lh "$here/vendor/crabhop"
+
+# 桌面入口 + 图标随包走：postinstall 立刻注册，preuninstall 清掉
+mkdir -p "$here/share/icons"
+cp "$root/packaging/crabhop.desktop" "$here/share/crabhop.desktop"
+for size in 128x128 256x256 512x512; do
+	mkdir -p "$here/share/icons/$size"
+	cp "$root/assets/icons/hicolor/$size/apps/crabhop.png" "$here/share/icons/$size/crabhop.png"
+done

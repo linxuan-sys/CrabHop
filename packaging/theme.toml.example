@@ -24,3 +24,9 @@ pink = "#f5c2e7"
 raised = "#313244"
 disabled = "#6c7086"
 accent_ink = "#11111b"
+
+# 三列背景有别名：left = mantle（左列）、middle = base（中列）、right = crust（右列）。
+# 保存即生效，无需重启。字体也可换（可选）：指向任意字体文件，系统字体也行；
+# 图标会自动回退内置 Maple（nerd 补丁），不会变豆腐块：
+# [font]
+# path = "/usr/share/fonts/noto/NotoSansMono-Regular.ttf"

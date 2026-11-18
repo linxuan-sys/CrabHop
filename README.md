@@ -28,15 +28,27 @@ CrabHop 是一个桌面文件管理器：左边是当前目录的父级、中间
 
 - **三列布局**：父列 / 当前列 / 预览列，列宽可拖、可存
 - **键位表完全可覆盖**：写一份 `~/.config/crabhop/keymap.toml`，出厂表整张让位
-- **`?` 交互式帮助**：可搜索、`↑↓` 浏览、回车直接执行该行的动作
+- **右侧竖条（rail）**：常驻窗口右缘，顶上两个按钮——索引、帮助，点开成侧边栏，再点收起
+- **索引侧边栏 `i`**：书签 + 高频访问 + 最近三区，叠在预览列上不挤空间，左缘拖着伸缩；`Del` 删条目（可撤回），`Ctrl+S` 存当前目录
+- **帮助侧边栏 `?`**：可搜索、`↑↓` 浏览、回车直接执行该行的动作；和索引同一个槽位，一次只开一个
 - **`/` 高亮查找**：列表里命中的字符变色，`n` / `N` 跳下一个 / 上一个
-- **索引面板 `i`**：书签 + 高频访问 + 最近三区，`Del` 删条目（可撤回），`Ctrl+S` 存当前目录
 - **标签页**：`t t` 新建、`t q` 关闭，`1`–`9` `0` 切换，`[` `]` 交换位置
 - **回收站**：`g t` 开成独立标签页，`Enter` 恢复、`D` 永久删除、`C` 清空
-- **右键菜单**（或键盘 `o`）：在终端中打开、打开方式、复制、剪切、粘贴
+- **右键菜单**（或键盘 `o`）：在终端中打开、打开方式、复制、剪切、粘贴、移动到回收站
 - **多选**：`Space` 选入/选出，`j`/`k` 移动，`Ctrl+A` 全选，状态栏显示 `SELECT`
 - **撤回**：`Ctrl+Z` 或 `u`，粘贴/删除/重命名/建链接都能回退，栈深 10
 - **`Enter` 用默认程序打开**，`l` / `→` 进入目录
+- **顶栏按钮簇**：← 上级、→ 进入、最小化、最大化/还原、关闭；底栏一行高频快捷键提示
+
+### 拖拽
+
+- **拖出**：把文件行拖去别的程序（Nautilus、浏览器、微信……）。复制还是移动由接收方决定，
+  对方选了移动，原件自动清掉；Esc 取消
+- **拖入**：别的程序拖文件进来，落到当前目录——空手是复制，按住 `Shift` 是移动，都能 `u` 撤回
+- **窗口内拖**：拖到目录行上松手即移动；悬停目录 1 秒自动进入（弹簧目录）；拖到左侧父列
+  悬停 1 秒回到上一级；拖出窗口自动交接成桌面拖拽
+- 实现上 winit 0.30 不说 Wayland 拖拽协议，CrabHop 在窗口自己的 `wl_display` 上挂第二条
+  事件队列直接讲 `wl_data_device`（`src/dnd.rs`），X11 会话静默降级
 
 ### 预览栈
 
@@ -58,10 +70,26 @@ CrabHop 是一个桌面文件管理器：左边是当前目录的父级、中间
 - **系统剪贴板**：复制文件时同时挂 `text/uri-list` 与 GNOME / KDE 风味，别的文件管理器能粘走
 - **UDisks2 挂载面板**（`M`）：zbus 直连，不调外部命令
 - **打开方式双区**：推荐区（MIME 匹配）+ 全部应用区，`Ctrl+Enter` 设成默认
+- **菜单项自注册**：第一次启动把 `.desktop` 和图标写进 `~/.local/share`（npm 装的用户在安装那一刻就有，见下）
 
 ## 安装
 
-### 方式一：下载发布包（推荐）
+### 方式一：npm（最省事）
+
+```sh
+npm i -g crabhop
+```
+
+装完**立刻**有应用菜单项和图标（postinstall 注册；`sudo` 装进 `/usr/local/share`，
+普通装进 `~/.local/share`）。卸载同样干净：
+
+```sh
+npm uninstall -g crabhop     # 菜单项、图标一并清掉，不留守尾
+```
+
+用了 `--ignore-scripts` 的话，首次运行 `crabhop` 会补注册。目前只提供 linux-x64 二进制。
+
+### 方式二：下载发布包
 
 ```sh
 wget https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.3/crabhop-1.0.3-linux-x86_64.tar.xz
@@ -70,7 +98,20 @@ cd crabhop-1.0.3
 ./install.sh
 ```
 
-### 方式二：源码构建
+### 方式三：Arch（makepkg）
+
+仓库里有两份 PKGBUILD：
+
+- `packaging/arch/` —— `crabhop`，源码编译（需要 Rust 工具链）
+- `packaging/arch-bin/` —— `crabhop-bin`，直接解发布包，秒装
+
+```sh
+cd packaging/arch-bin && makepkg -si
+```
+
+pacman 记账：装完菜单就有，`pacman -R crabhop-bin` 片甲不留。AUR 包在筹备中。
+
+### 方式四：源码构建
 
 ```sh
 git clone https://github.com/linxuan-sys/CrabHop
@@ -82,17 +123,15 @@ cargo build --release
 
 依赖：Rust 工具链、Vulkan 驱动、Wayland 或 X11。可选 `ffmpeg` / `ffmpegthumbnailer`（视频首帧）。
 
-`npm i -g crabhop` 装的用户也一样：首次运行会自动把菜单项和图标写进 `~/.local/share`。
-
 ## 卸载
 
-```sh
-cd crabhop-1.0.3 && ./uninstall.sh     # 撤掉 ~/.local 里的程序、菜单项、图标
-```
+- npm：`npm uninstall -g crabhop`（自动清理菜单项与图标）
+- 发布包：`cd crabhop-1.0.3 && ./uninstall.sh`
+- Arch：`pacman -R crabhop-bin`（或 `crabhop`）
 
 配置和数据不会被删——它们是使用者的东西：
 
-- 配置 `~/.config/crabhop/`（`config.toml`、`keymap.toml`）
+- 配置 `~/.config/crabhop/`（`config.toml`、`keymap.toml`、`theme.toml`）
 - 状态 `~/.local/share/crabhop/`（书签、频率、历史）
 - 缓存 `~/.cache/crabhop/`（预览桶，删了会自动重建）
 
@@ -102,18 +141,18 @@ cd crabhop-1.0.3 && ./uninstall.sh     # 撤掉 ~/.local 里的程序、菜单�
 
 - `keymap.toml.example` —— 完整 94 行键位表，抄成 `keymap.toml` 改
 - `config.toml.example` —— 带注释的三列比例示例，抄成 `config.toml` 改
-- `theme.toml.example` —— 25 个颜色字段的出厂值，抄成 `theme.toml` 后只留想改的
+- `theme.toml.example` —— 25 个颜色字段的出厂值 + 字体示例，抄成 `theme.toml` 后只留想改的
 
 出厂文件在仓库里，用户文件在 `~/.config/crabhop/`，后者覆盖前者：
 
 | 文件 | 覆盖什么 |
 |---|---|
 | `config.toml` | 三列比例；缺字段用出厂值 |
-| `theme.toml` | 颜色；`[colors]` 段，字段名同 `src/tokens.rs`，值写 `#rrggbb` |
+| `theme.toml` | 颜色与字体；`[colors]` 段字段名同 `src/tokens.rs`（三列背景可写别名 `left`/`middle`/`right`），值写 `#rrggbb`；`[font] path = "字体文件路径"` 换字体（系统字体文件即可，图标自动回退内置 Maple） |
 | `keymap.toml` | 整张键位表；不写则用仓库内的 `keymap-default.toml` |
 | `~/.config/mimeapps.list` | 默认打开程序（与桌面其他程序共用同一本账） |
 
-`theme.toml` 坏值、未知字段或不是 TOML，只在 stderr 提一句，然后继续用出厂颜色。
+`theme.toml` 坏值、未知字段或不是 TOML，只在 stderr 提一句，然后继续用出厂颜色。**保存即生效**：颜色与字体热重载，无需重启，窗口会弹"主题已重载"。
 
 ## 无头测试架
 
@@ -138,12 +177,12 @@ MIT（见 `LICENSE`）。第三方署名见 `NOTICE`：
 配置面刻意做成两层（出厂 + 用户覆盖），下面这些是规格已经写好、等着人接手的方向：
 
 - **主题切换 Mocha / Latte**：`src/tokens.rs` 的令牌第二套 + 切换键
-- **字体家族与字号**：从 `config.toml` 读取，行高 1.5 跟随
+- **字号与行高**：从 `config.toml` 读取，行高 1.5 跟随（字体文件已可从 `theme.toml` 热换）
 - **预览缓存上限与预加载开关**：写进 `config.toml`
 - **启动默认值**：排序、行模式、隐藏文件、确认策略
 - **用户图标覆盖表**：`config.toml` 的 `[icons]` 段
-- **拖拽双向**（约 1 天 + 3–5 天）：桌面协议是主要工作量
-- **剪贴板入方向**（约 3 天）：读外部 `text/uri-list` 粘进窗口
+- **剪贴板入方向**（约 3 天）：读外部 `text/uri-list` 粘进窗口（拖入已通，剪贴板粘贴还差这半）
+- **X11 拖拽**：XDND 协议，Wayland 侧已完成
 
 ---
 
@@ -177,15 +216,33 @@ replace whole.
 
 - **Three columns**: parent / current / preview; widths drag and persist
 - **Keymap fully overridable**: write `~/.config/crabhop/keymap.toml` and the factory table steps aside
-- **`?` interactive help**: searchable, `↑↓` to browse, Enter runs that row's action
+- **Right-edge rail**: a permanent strip whose two buttons unfold the index and help sidebars
+- **Index sidebar `i`**: bookmarks + high frequency + recent, riding over the preview column without
+  squeezing it, resize by dragging its left edge; `Del` deletes (undoable), `Ctrl+S` saves the cwd
+- **Help sidebar `?`**: searchable, `↑↓` to browse, Enter runs that row's action; shares the sidebar
+  slot with the index — one at a time
 - **`/` highlight find**: matching characters are coloured in place; `n` / `N` walk the hits
-- **Index panel `i`**: bookmarks + high frequency + recent, `Del` deletes (undoable), `Ctrl+S` saves the cwd
 - **Tabs**: `t t` new, `t q` close, `1`–`9` `0` switch, `[` `]` swap
 - **Trash**: `g t` opens it as its own tab; `Enter` restores, `D` deletes for good, `C` empties
-- **Right-click menu** (or `o`): open in terminal, open with, copy, cut, paste
+- **Right-click menu** (or `o`): open in terminal, open with, copy, cut, paste, move to trash
 - **Multi-select**: `Space` toggles, `j`/`k` walk, `Ctrl+A` all, the status bar says `SELECT`
 - **Undo**: `Ctrl+Z` or `u`; paste, delete, rename and link all come back; the stack is 10 deep
 - **`Enter` opens with the default app**; `l` / `→` walks into a directory
+- **Title-bar cluster**: back, forward, minimize, maximize/restore, close; a one-line hint strip of
+  the most-used keys rides the status bar
+
+### Drag and drop
+
+- **Out**: drag file rows into other programs (Nautilus, browsers, chat apps…). Copy or move is the
+  receiver's call; when it moves, the originals are cleaned up. Esc cancels
+- **In**: drop files from other programs into the current directory — bare hands copy, `Shift`
+  moves; both undo with `u`
+- **Inside the window**: drop on a directory row to move; hover a directory for a second to spring
+  into it; hover the parent column for a second to go up; dragging out of the window hands over to
+  the desktop drag
+- winit 0.30 does not speak the Wayland drag protocol, so CrabHop attaches a second event queue to
+  the window's own `wl_display` and talks `wl_data_device` directly (`src/dnd.rs`); X11 sessions
+  degrade quietly
 
 ### Preview
 
@@ -206,10 +263,28 @@ header card (codec, resolution, frame rate, duration) when it is not.
 - **UDisks2 mount panel** (`M`) through zbus, no external command
 - **Open with, two zones**: recommended (MIME matches) and every application, `Ctrl+Enter` to make
   one the default
+- **Self-registering menu entry**: the first run writes the `.desktop` file and icons under
+  `~/.local/share` (npm installs get them at install time — see below)
 
 ## Install
 
-### From the release tarball (recommended)
+### Via npm (the short road)
+
+```sh
+npm i -g crabhop
+```
+
+The menu entry and icons appear **immediately** (postinstall; `sudo` installs register under
+`/usr/local/share`, ordinary installs under `~/.local/share`). Uninstall is just as clean:
+
+```sh
+npm uninstall -g crabhop     # the menu entry and icons go with it
+```
+
+With `--ignore-scripts`, the first run of `crabhop` registers them instead. Linux x64 binary only
+for now.
+
+### From the release tarball
 
 ```sh
 wget https://github.com/linxuan-sys/CrabHop/releases/download/v1.0.3/crabhop-1.0.3-linux-x86_64.tar.xz
@@ -217,6 +292,20 @@ tar xf crabhop-1.0.3-linux-x86_64.tar.xz
 cd crabhop-1.0.3
 ./install.sh
 ```
+
+### On Arch (makepkg)
+
+Two PKGBUILDs live in the repository:
+
+- `packaging/arch/` — `crabhop`, built from source (needs a Rust toolchain)
+- `packaging/arch-bin/` — `crabhop-bin`, unpacks the release tarball, installs in seconds
+
+```sh
+cd packaging/arch-bin && makepkg -si
+```
+
+pacman keeps the ledger: the menu entry is there right after install, and `pacman -R crabhop-bin`
+leaves nothing behind. AUR packages are in preparation.
 
 ### From source
 
@@ -228,18 +317,16 @@ cargo build --release
 ./target/release/crabhop
 ```
 
-Installed through `npm i -g crabhop`? The first run puts the menu entry and the icons under `~/.local/share` by itself.
-
 Needs a Rust toolchain, a Vulkan driver, and Wayland or X11. `ffmpeg` / `ffmpegthumbnailer` are
 optional (video first frames).
 
 ## Uninstall
 
-```sh
-cd crabhop-1.0.3 && ./uninstall.sh
-```
+- npm: `npm uninstall -g crabhop` (menu entry and icons cleaned automatically)
+- tarball: `cd crabhop-1.0.3 && ./uninstall.sh`
+- Arch: `pacman -R crabhop-bin` (or `crabhop`)
 
-Configuration and state are deliberately left alone: `~/.config/crabhop/` (config, keymap),
+Configuration and state are deliberately left alone: `~/.config/crabhop/` (config, keymap, theme),
 `~/.local/share/crabhop/` (bookmarks, frequency, history), `~/.cache/crabhop/` (preview buckets,
 rebuilt on demand).
 
@@ -251,12 +338,15 @@ there): `keymap.toml.example`, the full 94-row key table to copy into `keymap.to
 `theme.toml.example`, all 25 colour fields at their factory values to copy into `theme.toml`.
 
 Factory files live in the repository, the person's in `~/.config/crabhop/`, the latter overriding
-the former: `config.toml` (column shares), `theme.toml` (colours), `keymap.toml` (the whole key
-table), and the desktop's own `mimeapps.list` for default applications.
+the former: `config.toml` (column shares), `theme.toml` (colours and font), `keymap.toml` (the whole
+key table), and the desktop's own `mimeapps.list` for default applications.
 
-`theme.toml` takes a `[colors]` table named after the fields in `src/tokens.rs`, values `#rrggbb`;
-write only the fields you want to change. A bad value, an unknown field or a file that is not TOML
-is reported on stderr for one line and ignored — the factory colour stands.
+`theme.toml` takes a `[colors]` table named after the fields in `src/tokens.rs` (the three column
+backgrounds also answer to `left` / `middle` / `right`), values `#rrggbb`; write only the fields you
+want to change. `[font] path = "…"` swaps the face for any font file on the system — icons fall
+back to the built-in Maple. A bad value, an unknown field or a file that is not TOML is reported on
+stderr for one line and ignored. **Saving is applying**: colours and font hot-reload without a
+restart, and the window toasts "主题已重载".
 
 ## The headless harness
 
@@ -277,7 +367,8 @@ the Maple Mono NF CN faces, and the icon set rooted in nvim-tree (`LICENSE-ICONS
 ## Community-welcome items
 
 The configuration surface is deliberately two-layered, and the items below are specifications
-already written down, waiting for hands: theme switching (Mocha/Latte), font family and size,
-preview cache caps and a preload switch, startup defaults (sort, linemode, hidden files, confirm
-policy), a user icon table, drag and drop in both directions (~1 day + 3–5 days), and the inbound
-half of the clipboard (~3 days).
+already written down, waiting for hands: theme switching (Mocha/Latte), font size and line height
+(the font file itself already hot-swaps from `theme.toml`), preview cache caps and a preload switch,
+startup defaults (sort, linemode, hidden files, confirm policy), a user icon table, the inbound
+half of the clipboard (~3 days — drag-in works, clipboard paste is the missing half), and X11
+drag-and-drop (XDND; the Wayland side is done).

@@ -3,6 +3,7 @@ use eframe::egui::{Painter, Pos2, Rect, Vec2, pos2, vec2};
 
 pub(crate) const TAB_HEIGHT: f32 = 36.0;
 pub(crate) const STATUS_HEIGHT: f32 = 28.0;
+pub(crate) const RAIL_WIDTH: f32 = 36.0;
 
 pub(crate) const HIDE_PARENT: f32 = 760.0;
 pub(crate) const HIDE_PREVIEW: f32 = 560.0;

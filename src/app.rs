@@ -11,9 +11,10 @@ use eframe::egui::{
 
 use crate::book;
 use crate::bulk;
-use crate::chrome::{self, STATUS_HEIGHT, TAB_HEIGHT};
+use crate::chrome::{self, RAIL_WIDTH, STATUS_HEIGHT, TAB_HEIGHT};
 use crate::complete::{self, Completions};
 use crate::config::{Config, SHARES};
+use crate::dnd;
 use crate::edit::Edit;
 use crate::folder::{Entry, FolderCache, Snapshot};
 use crate::frecency;
@@ -166,6 +167,13 @@ enum Answer {
 struct Yank {
 	paths: Vec<PathBuf>,
 	cut:   bool,
+}
+
+/// A drag that stays inside the window: pure egui, no protocol. It only becomes a
+/// Wayland drag-out if the pointer leaves the window mid-gesture.
+struct IDrag {
+	paths:     Vec<PathBuf>,
+	tab_hover: Option<(usize, Instant)>,
 }
 
 struct BulkEditor {
@@ -403,12 +411,25 @@ pub(crate) struct App {
 	frecency:    frecency::Frecency,
 	visited:     Option<PathBuf>,
 	fuzzy:       Option<Fuzzy>,
+	index_width: f32,
 	confirm:     Option<Confirm>,
 
 	device_job: Option<DeviceJob>,
 
 	trash_job:  Option<TrashJob>,
 	paste_job:  Option<paste::Job<paste::Done>>,
+	dnd:        Option<dnd::Dnd>,
+	dnd_try:    bool,
+	dnd_move:   Vec<PathBuf>,
+	dnd_hover:  bool,
+	dnd_drop:   Option<(Vec<PathBuf>, bool)>,
+	paste_cut:  Option<bool>,
+	idrag:        Option<IDrag>,
+	idrag_target: Option<PathBuf>,
+	idrag_spring: Option<(PathBuf, Instant)>,
+	idrag_icon:   Option<egui::TextureHandle>,
+	idrag_up:     Option<Instant>,
+	theme_rx:     Option<std::sync::mpsc::Receiver<()>>,
 	undo:       VecDeque<Undo>,
 	undo_job:   Option<UndoJob>,
 
@@ -505,6 +526,32 @@ impl App {
 
 		let mut app = Self::with_context(cc.egui_ctx.clone(), seed);
 		app.tokens = tokens;
+
+		// theme.toml saves apply live: watch the config dir (editors rename on save,
+		// so a file watch would lose the inode), filter for theme.toml, debounce.
+		if let Some(dir) = Config::dir() {
+			let (tx, rx) = std::sync::mpsc::channel();
+			let repaint = cc.egui_ctx.clone();
+			std::thread::spawn(move || {
+				let handler = move |event: Result<notify::Event, notify::Error>| {
+					let Ok(event) = event else { return };
+					if !event.paths.iter().any(|path| path.file_name().is_some_and(|name| name == "theme.toml")) {
+						return;
+					}
+					std::thread::sleep(Duration::from_millis(200));
+					let _ = tx.send(());
+					repaint.request_repaint();
+				};
+				use notify::Watcher as _;
+				let Ok(mut watcher) = notify::recommended_watcher(handler) else { return };
+				let _ = watcher.watch(&dir, notify::RecursiveMode::NonRecursive);
+				loop {
+					std::thread::park();
+				}
+			});
+			app.theme_rx = Some(rx);
+		}
+
 		app
 	}
 
@@ -518,12 +565,15 @@ impl App {
 
 		crate::preview::warm_pdf();
 
+		let keys = Keys::load();
+
 		Self {
 			tokens: Tokens::MOCHA,
 			config,
 			shares,
 			cache: FolderCache::spawn(ctx.clone()),
-			keys: Keys::load(),
+			keys,
+			theme_rx: None,
 			tabs: vec![ Tab::at(start) ],
 			active: 0,
 			rename: None,
@@ -568,10 +618,22 @@ impl App {
 			frecency: frecency::Frecency::load(),
 			visited: None,
 			fuzzy: None,
+			index_width: 380.0,
 			confirm: None,
 			device_job: None,
 			trash_job: None,
 			paste_job: None,
+			dnd: None,
+			dnd_try: false,
+			dnd_move: Vec::new(),
+			dnd_hover: false,
+			dnd_drop: None,
+			paste_cut: None,
+			idrag: None,
+			idrag_target: None,
+			idrag_spring: None,
+			idrag_icon: None,
+			idrag_up: None,
 			undo: VecDeque::new(),
 			undo_job: None,
 			prompt: None,
@@ -767,6 +829,9 @@ impl App {
 			},
 			Action::Help => {
 				self.help = !self.help;
+				if self.help {
+					self.fuzzy_close();
+				}
 				self.help_from = 0;
 				self.help_at = 0;
 				self.help_focus = PanelFocus::default();
@@ -1253,7 +1318,7 @@ impl App {
 		match job.poll() {
 			None => self.paste_job = Some(job),
 			Some(Ok(done)) => {
-				let cut = self.yank.as_ref().is_some_and(|yank| yank.cut);
+				let cut = self.paste_cut.take().unwrap_or_else(|| self.yank.as_ref().is_some_and(|yank| yank.cut));
 				if cut {
 					self.yank = None;
 				}
@@ -1879,6 +1944,8 @@ impl App {
 			crate::menu::Page::Main => match crate::menu::main_items(&menu.target, menu.yank).into_iter().nth(standing) {
 				Some(crate::menu::Item::Do(crate::menu::Action::Copy, _)) => self.menu_copy(false, ctx),
 				Some(crate::menu::Item::Do(crate::menu::Action::Cut, _)) => self.menu_copy(true, ctx),
+				Some(crate::menu::Item::Do(crate::menu::Action::Rename, _)) => self.rename_row(self.cursor()),
+				Some(crate::menu::Item::Do(crate::menu::Action::Trash, _)) => self.remove(false),
 				Some(crate::menu::Item::Do(crate::menu::Action::Paste, _)) => self.menu_paste(),
 				Some(crate::menu::Item::Do(crate::menu::Action::OpenTerminal, _)) => self.menu_terminal(),
 				Some(crate::menu::Item::Do(crate::menu::Action::OpenWith, _)) => self.menu_apps(),
@@ -2461,6 +2528,218 @@ impl App {
 		}
 	}
 
+	fn dnd_poll(&mut self, ctx: &Context) {
+		// A finished move-drag leaves duplicates behind: purge the originals through the
+		// same job the trash tab's D key uses. No undo — the destination is the target's
+		// secret, the same as every other file manager's drag.
+		if !self.dnd_move.is_empty() && self.trash_job.is_none() {
+			let paths = std::mem::take(&mut self.dnd_move);
+			let count = paths.len();
+			for path in &paths {
+				self.selection.remove(path);
+			}
+			self.trash_job = Some(TrashJob::Purge(trash::remove(paths), format!("已拖出移动 {count} 项")));
+		}
+
+		let Some(dnd) = &mut self.dnd else { return };
+		dnd.set_shift(ctx.input(|i| i.modifiers.shift));
+		let events = dnd.poll();
+		let active = dnd.active();
+
+		let mut dropped = None;
+		for event in events {
+			match event {
+				dnd::Event::DragEnded(outcome) => {
+					// The compositor ate the button release during the grab, so winit never
+					// reported it: tell egui the hand is open again, or the next click is swallowed.
+					ctx.input_mut(|i| i.events.push(egui::Event::PointerButton {
+						pos: Pos2::ZERO, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::default(),
+					}));
+					if let dnd::Outcome::Moved(paths) = outcome {
+						self.dnd_move.extend(paths);
+					}
+				}
+				dnd::Event::Hovered => self.dnd_hover = true,
+				dnd::Event::Left => self.dnd_hover = false,
+				dnd::Event::Dropped { paths, cut } => dropped = Some((paths, cut)),
+			}
+		}
+
+		if let Some((paths, cut)) = dropped {
+			self.dnd_hover = false;
+			if self.in_bin() {
+				self.toasts.push("回收站不收拖入", toast::Kind::Warn);
+			} else {
+				let dest = self.tab().path().to_owned();
+				// Dropping onto the files' own directory is a no-op, not an error.
+				let paths: Vec<PathBuf> = paths.into_iter().filter(|path| path.parent() != Some(dest.as_path()) && !dest.starts_with(path)).collect();
+				if paths.is_empty() {
+					self.toasts.push("这些文件本来就在当前目录", toast::Kind::Warn);
+				} else {
+					self.dnd_drop = Some((paths, cut));
+				}
+			}
+		}
+
+		// Land the drop through the paste job when it is free: progress and undo come along.
+		if self.dnd_drop.is_some() && self.paste_job.is_none() {
+			let (paths, cut) = self.dnd_drop.take().unwrap();
+			let count = paths.len();
+			let dest = self.tab().path().to_owned();
+			self.paste_cut = Some(cut);
+			self.paste_job = Some(paste::run(paths, dest, cut, false));
+			self.toasts.push(
+				if cut { format!("拖入移动 {count} 项…") } else { format!("拖入复制 {count} 项…") },
+				toast::Kind::Ok,
+			);
+		}
+
+		if active || self.dnd_hover {
+			// The compositor owns the pointer mid-drag, so winit reports nothing and egui
+			// would sleep: keep the frames — and the queue pump — coming ourselves.
+			ctx.request_repaint_after(Duration::from_millis(16));
+		}
+	}
+
+	fn idrag_poll(&mut self, ctx: &Context) {
+		if self.idrag.is_none() {
+			return;
+		}
+		let (pointer, down, gone) = ctx.input(|i| (
+			i.pointer.latest_pos(),
+			i.pointer.primary_down(),
+			i.events.iter().any(|event| matches!(event, egui::Event::PointerGone)),
+		));
+
+		if !down {
+			// Released inside: move onto the folder row under the pointer, or the tab, or here.
+			let drag = self.idrag.take().unwrap();
+			self.idrag_spring = None;
+			self.idrag_icon = None;
+			self.idrag_up = None;
+			let mut dest = self.idrag_target.take().unwrap_or_else(|| self.tab().path().to_owned());
+			if let Some(pointer) = pointer
+				&& let Some(&(index, _)) = self.tab_chip_hits.iter().find(|(_, rect)| rect.contains(pointer))
+			{
+				dest = self.tabs[index].path().to_owned();
+			}
+			if self.in_bin() {
+				self.toasts.push("回收站不收拖入", toast::Kind::Warn);
+				return;
+			}
+			// Same directory, or a folder dropped into itself/descendant: nothing to do.
+			let paths: Vec<PathBuf> = drag.paths.into_iter()
+				.filter(|path| path.parent() != Some(dest.as_path()) && !dest.starts_with(path))
+				.collect();
+			if paths.is_empty() {
+				self.toasts.push("没有可移动的项（同目录或自身内部）", toast::Kind::Warn);
+				return;
+			}
+			let count = paths.len();
+			for path in &paths {
+				self.selection.remove(path);
+			}
+			self.dnd_drop = Some((paths, true));
+			self.toasts.push(format!("移动 {count} 项…"), toast::Kind::Ok);
+			return;
+		}
+
+		// Leave detection, three ways: the PointerGone event, a null position, or a
+		// position outside the window — whichever the platform actually delivers.
+		let outside = gone || pointer.is_none() || pointer.is_some_and(|p| !ctx.viewport_rect().contains(p));
+		if outside {
+			// Left the window mid-drag: hand the gesture to the Wayland drag-out.
+			let drag = self.idrag.take().unwrap();
+			self.idrag_target = None;
+			self.idrag_spring = None;
+			self.idrag_icon = None;
+			self.idrag_up = None;
+			let count = drag.paths.len();
+			let scale = ctx.pixels_per_point();
+			if self.dnd.as_mut().is_some_and(|dnd| dnd.start(drag.paths, scale)) {
+				self.toasts.push(format!("拖出 {count} 项（松开即落到目标程序）"), toast::Kind::Ok);
+			} else {
+				self.toasts.push("拖出未启动（CRABHOP_DND_DEBUG=1 可看原因）", toast::Kind::Warn);
+			}
+			return;
+		}
+		let Some(pointer) = pointer else { return };
+
+		// Spring up: hovering the parent column for a beat walks the drag up one level,
+		// so the middle shows the folder you came from and release drops into the parent.
+		let over_parent = !self.in_bin()
+			&& chrome::columns(self.body, self.shares).parent.is_some_and(|rect| rect.contains(pointer));
+		if over_parent {
+			let since = self.idrag_up.unwrap_or_else(Instant::now);
+			self.idrag_up = Some(since);
+			if since.elapsed() > Duration::from_secs(1) {
+				self.idrag_up = None;
+				self.idrag_target = None;
+				self.leave();
+			}
+		} else {
+			self.idrag_up = None;
+		}
+
+		// Hovering a tab chip for a beat switches to it, desktop-style.
+		let hovered = self.tab_chip_hits.iter().find(|(_, rect)| rect.contains(pointer)).map(|&(index, _)| index);
+		let mut switch = None;
+		{
+			let drag = self.idrag.as_mut().unwrap();
+			match hovered {
+				Some(index) => {
+					let since = drag.tab_hover.filter(|&(i, _)| i == index).map(|(_, at)| at).unwrap_or_else(Instant::now);
+					drag.tab_hover = Some((index, since));
+					if since.elapsed() > Duration::from_millis(600) && index != self.active {
+						switch = Some(index);
+					}
+				}
+				None => drag.tab_hover = None,
+			}
+		}
+		if let Some(index) = switch {
+			self.tab_switch(index as isize, false);
+		}
+		if self.idrag_icon.is_none() {
+			let many = self.idrag.as_ref().unwrap().paths.len() > 1;
+			self.idrag_icon = Some(ctx.load_texture("crabhop-idrag", dnd::icon_rgba(many), egui::TextureOptions::LINEAR));
+		}
+		ctx.set_cursor_icon(CursorIcon::Grabbing);
+		ctx.request_repaint_after(Duration::from_millis(100));
+	}
+
+	fn drag_row(&mut self, position: usize, snapshot: &Snapshot) {
+		let Some(&entry) = self.tab().view.get(position) else { return };
+		let Some(item) = snapshot.entries.get(entry) else { return };
+		let path = self.tab().path().join(&item.name);
+		let paths = if self.selection.contains(&path) { self.targets() } else { vec![path] };
+		let count = paths.len();
+		self.idrag = Some(IDrag { paths, tab_hover: None });
+		self.toasts.push(format!("拖动 {count} 项（放到目录上移动，拖出窗口即拖出）"), toast::Kind::Ok);
+	}
+
+	fn theme_poll(&mut self, ctx: &Context) {
+		let fired = self.theme_rx.as_ref().is_some_and(|rx| {
+			if rx.try_recv().is_ok() {
+				while rx.try_recv().is_ok() {}
+				true
+			} else {
+				false
+			}
+		});
+		if !fired {
+			return;
+		}
+		let (tokens, notes) = Tokens::reload();
+		for note in notes {
+			eprintln!("crabhop: theme: {note}");
+		}
+		self.tokens = tokens;
+		Tokens::install_with(ctx, &tokens);
+		self.toasts.push("主题已重载", toast::Kind::Ok);
+		ctx.request_repaint();
+	}
+
 	fn trash_view_open(&mut self) {
 		if self.tabs.len() >= TAB_LIMIT {
 			self.toasts.push(format!("最多 {TAB_LIMIT} 个标签页"), toast::Kind::Warn);
@@ -2911,6 +3190,7 @@ impl App {
 	}
 
 	fn fuzzy_index(&mut self) {
+		self.help = false;
 		let now = now_secs();
 		let items: Vec<FuzzyItem> = index_rows(
 			&self.bookmarks.entries,
@@ -4123,6 +4403,7 @@ impl App {
 
 		self.tab_bar(ui, area, &font, advance);
 		self.draw_columns(ui, body, &font, advance);
+		self.draw_rail(ui, area);
 		self.draw_spot(ui, body);
 		self.draw_menu(ui, area, &font, &small);
 		self.status_bar(ui, area, &small);
@@ -4157,6 +4438,19 @@ impl App {
 		}
 		self.draw_toasts(ui, area, &small);
 		self.draw_which(ui, area, &small);
+
+		// The in-window drag's page rides the pointer, above everything else.
+		if self.idrag.is_some()
+			&& let Some(icon) = &self.idrag_icon
+			&& let Some(pointer) = self.hover
+		{
+			ui.painter().image(
+				icon.id(),
+				Rect::from_min_size(pointer + vec2(12.0, 12.0), vec2(48.0, 48.0)),
+				Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+				Color32::WHITE,
+			);
+		}
 	}
 
 	fn tab_bar(&mut self, ui: &mut Ui, area: Rect, font: &FontId, advance: f32) {
@@ -4166,7 +4460,7 @@ impl App {
 		painter.rect_filled(rect, 0.0, tokens.base);
 		painter.line_segment([ rect.left_bottom(), rect.right_bottom() ], (1.0, tokens.border));
 
-		let strip = Rect::from_min_max(rect.min, pos2(rect.max.x - 36.0, rect.max.y));
+		let strip = Rect::from_min_max(rect.min, pos2(rect.max.x - 192.0, rect.max.y));
 		let chips: Vec<(usize, String, f32, String)> = self
 			.tabs
 			.iter()
@@ -4311,6 +4605,37 @@ impl App {
 		}
 		self.plus_hit = Some(plus);
 
+		// Corner cluster: back, forward, minimize, maximize — then the close.
+		let maximized = ui.ctx().input(|i| i.viewport().maximized).unwrap_or(false);
+		let nav = [
+			("nav-back", "\u{f060}", rect.max.x - 166.0, 40.0),
+			("nav-forward", "\u{f061}", rect.max.x - 122.0, 40.0),
+			("window-minimize", "\u{f2d1}", rect.max.x - 84.0, 28.0),
+			("window-maximize", if maximized { "\u{f2d2}" } else { "\u{f2d0}" }, rect.max.x - 52.0, 28.0),
+		];
+		for (id, glyph, x, w) in nav {
+			let button = Rect::from_center_size(pos2(x, rect.center().y), vec2(w, 28.0));
+			let response = ui.interact(button, egui::Id::unique(id), Sense::click());
+			if response.hovered() {
+				painter.rect_filled(button, 6.0, tokens.cursor_bg.gamma_multiply(0.5));
+			}
+			painter.text(
+				button.center(),
+				Align2::CENTER_CENTER,
+				glyph,
+				FontId::new(FONT_SMALL, FontFamily::Monospace),
+				if response.hovered() { tokens.text } else { tokens.subtext },
+			);
+			if response.clicked() {
+				match id {
+					"nav-back" => self.leave(),
+					"nav-forward" => self.smart_enter(),
+					"window-minimize" => ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true)),
+					_ => ui.ctx().send_viewport_cmd(ViewportCommand::Maximized(!maximized)),
+				}
+			}
+		}
+
 		let close = Rect::from_center_size(pos2(rect.max.x - 20.0, rect.center().y), vec2(28.0, 28.0));
 		let response = ui.interact(close, egui::Id::unique("window-close"), Sense::click());
 		if response.hovered() {
@@ -4436,6 +4761,10 @@ impl App {
 			let first = offset.floor() as usize;
 			let fraction = offset - first as f32;
 
+			if self.idrag.is_some() && self.hover.is_some_and(|p| parent_rect.contains(p)) {
+				painter.rect_stroke(parent_rect.shrink(1.0), 0.0, (1.5, tokens.accent), egui::StrokeKind::Inside);
+			}
+
 			Self::rows(
 				&painter,
 				&tokens,
@@ -4466,8 +4795,17 @@ impl App {
 					continue;
 				}
 
-				if ui.interact(row, egui::Id::unique(("parent-row", position)), Sense::click()).clicked() {
+				let response = ui.interact(row, egui::Id::unique(("parent-row", position)), Sense::click());
+				if response.clicked() {
 					seated = Some(position);
+				}
+				if self.idrag.is_some() && self.hover.is_some_and(|p| row.contains(p))
+					&& let Some(item) = snapshot.entries.get(position)
+					&& item.dir
+				{
+					self.idrag_target = Some(path.join(&item.name));
+					painter.rect_filled(row, 0.0, tokens.accent.gamma_multiply(0.2));
+					painter.rect_stroke(row, 0.0, (1.0, tokens.accent), egui::StrokeKind::Inside);
 				}
 			}
 			if let Some(position) = seated {
@@ -4524,9 +4862,13 @@ impl App {
 				self.find_pattern().as_deref(),
 			);
 
+			if self.dnd_hover {
+				painter.rect_stroke(list.shrink(1.0), 0.0, (1.5, tokens.accent), egui::StrokeKind::Inside);
+			}
+
 			if self.item_rename.is_none() {
 				let blank = ui.interact(list, egui::Id::unique("list-blank"), Sense::click());
-				let (mut clicked, mut renamed, mut wanted) = (None, None, None);
+				let (mut clicked, mut opened, mut wanted, mut spring, mut over_dir) = (None, None, None, None, false);
 
 				for i in 0..rows_visible + 1 {
 					let Some(position) = clicked_row(first, i, view.len()) else { break };
@@ -4537,22 +4879,55 @@ impl App {
 						continue;
 					}
 
-					let response = ui.interact(row, egui::Id::unique(("row", position)), Sense::click());
+					let response = ui.interact(row, egui::Id::unique(("row", position)), Sense::click_and_drag());
 					if response.secondary_clicked() {
 						wanted = Some((position, row.min));
 					} else if response.double_clicked() {
-						renamed = Some(position);
+						opened = Some(position);
 					} else if response.clicked() {
 						clicked = Some(position);
+					} else if response.drag_started() {
+						self.drag_row(position, &snapshot);
 					}
+					if self.idrag.is_some() && self.hover.is_some_and(|p| row.contains(p))
+						&& let Some(&entry) = view.get(position)
+						&& let Some(item) = snapshot.entries.get(entry)
+					{
+						if item.dir {
+							let target = path.join(&item.name);
+							self.idrag_target = Some(target.clone());
+							painter.rect_filled(row, 0.0, tokens.accent.gamma_multiply(0.2));
+							painter.rect_stroke(row, 0.0, (1.0, tokens.accent), egui::StrokeKind::Inside);
+							// Spring-loaded folder: hover a beat and the drag walks into it.
+							let since = self.idrag_spring.as_ref().filter(|(p, _)| *p == target).map(|(_, at)| *at).unwrap_or_else(Instant::now);
+							self.idrag_spring = Some((target.clone(), since));
+							if since.elapsed() > Duration::from_secs(1) {
+								spring = Some(target);
+							}
+							over_dir = true;
+						} else {
+							self.idrag_spring = None;
+						}
+					}
+				}
+
+				if !over_dir {
+					self.idrag_spring = None;
+				}
+				if let Some(target) = spring {
+					self.idrag_spring = None;
+					self.idrag_target = None;
+					self.go(target);
 				}
 
 				if let Some((position, at)) = wanted {
 					self.menu_on_row(position, at);
 				} else if blank.secondary_clicked() {
 					self.menu_on_blank(list.min);
-				} else if let Some(position) = renamed {
-					self.rename_row(position);
+				} else if let Some(position) = opened {
+					// Desktop habit: double-click enters, same as the right arrow.
+					self.set_cursor(position);
+					self.smart_enter();
 				} else if let Some(position) = clicked {
 					self.click_row(position);
 				}
@@ -4750,39 +5125,27 @@ impl App {
 		let right = right_group(self.sort, self.tab().symlinks, self.tab().filter.as_deref());
 		let start = rect.max.x - 12.0 - painter.layout_no_wrap(right.clone(), small.clone(), tokens.subtext).size().x;
 
-		let open = self.index_open();
-		let mut edge = start - 10.0;
-		let (help_button, help_clicked) =
-			status_button(ui, &tokens, small, pos2(edge, middle), "帮助", self.help, "status-help");
-		edge = help_button.min.x - 6.0;
+		let edge = start - 10.0;
 		let (trash_button, trash_clicked) =
-			status_button(ui, &tokens, small, pos2(edge, middle), "回收站", self.in_bin(), "status-trash");
-		edge = trash_button.min.x - 6.0;
-		let (index_button, index_clicked) =
-			status_button(ui, &tokens, small, pos2(edge, middle), "索引", open, "status-index");
+			status_button(ui, &tokens, small, pos2(edge, middle), "g t 回收站 \u{f1f8}", self.in_bin(), "status-trash");
 
-		if index_clicked {
-			if open {
-				self.fuzzy_close();
-			} else {
-				self.fuzzy_index();
-			}
-		}
 		if trash_clicked && !self.in_bin() {
 			self.trash_view_open();
 		}
-		if help_clicked {
-			self.act(Action::Help, ui.ctx());
-		}
 
-		self.status_index = Some(index_button);
 		self.status_trash = Some(trash_button);
-		self.status_help = Some(help_button);
 
 		painter.text(pos2(start, middle), Align2::LEFT_CENTER, right, small.clone(), tokens.subtext);
 
-		if index_button.min.x - 12.0 > at {
-			painter.line_segment([ pos2(index_button.min.x - 10.0, rect.min.y + 6.0), pos2(index_button.min.x - 10.0, rect.max.y - 6.0) ], (1.0, tokens.border));
+		// The handful everyone uses daily; the ? panel carries the rest.
+		let hints = "g 跳转 · u 撤回 · d 删除 · y 复制 · p 粘贴 · / 查找 · f 过滤 · Tab 信息面板 · a 新建 · m 切换显示";
+		let hints_width = painter.layout_no_wrap(hints.to_owned(), small.clone(), tokens.subtext).size().x;
+		if trash_button.min.x - 12.0 > at + hints_width {
+			painter.text(pos2(at, middle), Align2::LEFT_CENTER, hints, small.clone(), tokens.disabled);
+		}
+
+		if trash_button.min.x - 12.0 > at {
+			painter.line_segment([ pos2(trash_button.min.x - 10.0, rect.min.y + 6.0), pos2(trash_button.min.x - 10.0, rect.max.y - 6.0) ], (1.0, tokens.border));
 		}
 	}
 
@@ -5173,6 +5536,56 @@ impl App {
 		ui.ctx().request_repaint();
 	}
 
+	/// The browser-style rail: a permanent strip on the right edge. Its top
+	/// button unfolds the index sidebar, the one below it the help sidebar;
+	/// both ride over the preview, and only one unfolds at a time.
+	fn draw_rail(&mut self, ui: &mut Ui, area: Rect) {
+		let tokens = self.tokens;
+		let painter = ui.painter().clone();
+		let rail = Rect::from_min_max(
+			pos2(area.max.x - RAIL_WIDTH, area.min.y + TAB_HEIGHT),
+			pos2(area.max.x, area.max.y - STATUS_HEIGHT),
+		);
+		painter.rect_filled(rail, 0.0, tokens.mantle);
+		painter.line_segment([ rail.left_top(), rail.left_bottom() ], (1.0, tokens.border));
+
+		let lit = self.index_open();
+		let button = Rect::from_center_size(pos2(rail.center().x, rail.min.y + 20.0), vec2(28.0, 28.0));
+		let response = ui.interact(button, egui::Id::unique("index-toggle"), Sense::click());
+		if response.hovered() {
+			painter.rect_filled(button, 6.0, tokens.cursor_bg.gamma_multiply(0.5));
+		}
+		painter.text(
+			button.center(),
+			Align2::CENTER_CENTER,
+			"\u{f0ca}",
+			FontId::new(FONT_SMALL, FontFamily::Monospace),
+			if lit { tokens.accent } else if response.hovered() { tokens.text } else { tokens.subtext },
+		);
+		self.status_index = Some(button);
+		if response.clicked() {
+			if lit { self.fuzzy_close() } else { self.fuzzy_index() }
+		}
+
+		let help_lit = self.help;
+		let help_button = Rect::from_center_size(pos2(rail.center().x, rail.min.y + 56.0), vec2(28.0, 28.0));
+		let response = ui.interact(help_button, egui::Id::unique("help-toggle"), Sense::click());
+		if response.hovered() {
+			painter.rect_filled(help_button, 6.0, tokens.cursor_bg.gamma_multiply(0.5));
+		}
+		painter.text(
+			help_button.center(),
+			Align2::CENTER_CENTER,
+			"\u{f128}",
+			FontId::new(FONT_SMALL, FontFamily::Monospace),
+			if help_lit { tokens.accent } else if response.hovered() { tokens.text } else { tokens.subtext },
+		);
+		self.status_help = Some(help_button);
+		if response.clicked() {
+			self.act(Action::Help, ui.ctx());
+		}
+	}
+
 	fn draw_fuzzy(&mut self, ui: &mut Ui, area: Rect, font: &FontId, small: &FontId) {
 		let Some(fuzzy) = &self.fuzzy else { return };
 		let mut clicked_query = false;
@@ -5180,9 +5593,22 @@ impl App {
 		let painter = ui.painter().clone();
 		let advance = painter.layout_no_wrap("0".to_owned(), font.clone(), tokens.text).size().x;
 
-		let width: f32 = if matches!(fuzzy.mode, FuzzyMode::FindNames | FuzzyMode::FindText) { 860.0 } else { 720.0 };
-		let width = width.min(area.width() - 80.0);
-		let rows = fuzzy.hits.len().min(12);
+		// Index lives in a right sidebar riding over the preview (no column squeeze);
+		// the find/device panels keep their centered float.
+		let sidebar = fuzzy.mode == FuzzyMode::Index;
+		let width: f32 = if sidebar {
+			self.index_width.clamp(260.0, (area.width() - RAIL_WIDTH - 200.0).max(260.0))
+		} else if matches!(fuzzy.mode, FuzzyMode::FindNames | FuzzyMode::FindText) {
+			860.0_f32.min(area.width() - 80.0)
+		} else {
+			720.0_f32.min(area.width() - 80.0)
+		};
+		let cap = if sidebar {
+			((area.height() - TAB_HEIGHT - STATUS_HEIGHT - 70.0) / 32.0).floor().max(1.0) as usize
+		} else {
+			12
+		};
+		let rows = fuzzy.hits.len().min(cap);
 		let headers = if fuzzy.mode == FuzzyMode::Index {
 			(0..rows)
 				.filter(|i| {
@@ -5199,10 +5625,28 @@ impl App {
 			0.0
 		};
 		let extra_line = matches!(fuzzy.mode, FuzzyMode::Devices { .. });
-		let height = 44.0 + rows as f32 * 32.0 + headers * 18.0 + 26.0 + if extra_line { 18.0 } else { 0.0 };
-		let panel = Rect::from_min_size(pos2(area.center().x - width * 0.5, area.min.y + area.height() * 0.2), vec2(width, height));
+		let panel = if sidebar {
+			Rect::from_min_max(
+				pos2(area.max.x - RAIL_WIDTH - width, area.min.y + TAB_HEIGHT),
+				pos2(area.max.x - RAIL_WIDTH, area.max.y - STATUS_HEIGHT),
+			)
+		} else {
+			let height = 44.0 + rows as f32 * 32.0 + headers * 18.0 + 26.0 + if extra_line { 18.0 } else { 0.0 };
+			Rect::from_min_size(pos2(area.center().x - width * 0.5, area.min.y + area.height() * 0.2), vec2(width, height))
+		};
 
 		let _ = ui.interact(panel, egui::Id::unique("fuzzy-panel"), Sense::click());
+		if sidebar {
+			// Drag the left edge to resize; the preview underneath keeps its space.
+			let grip = Rect::from_min_max(pos2(panel.min.x - 3.0, panel.min.y), pos2(panel.min.x + 3.0, panel.max.y));
+			let response = ui.interact(grip, egui::Id::unique("index-grip"), Sense::click_and_drag());
+			if response.dragged() {
+				self.index_width = (self.index_width - response.drag_delta().x).clamp(260.0, (area.width() - RAIL_WIDTH - 200.0).max(260.0));
+			}
+			if response.hovered() || response.dragged() {
+				ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+			}
+		}
 		if !fuzzy.focus.inside && let Some(true) = Some(ui.interact(
 			Rect::from_min_size(pos2(panel.min.x, panel.min.y), vec2(panel.width(), 44.0)),
 			egui::Id::unique("fuzzy-query-box"),
@@ -5211,9 +5655,10 @@ impl App {
 			clicked_query = true;
 		}
 
+		let round = if sidebar { 0.0 } else { 8.0 };
 		chrome::shadow(&painter, panel, 8.0);
-		painter.rect_filled(panel, 8.0, tokens.raised);
-		painter.rect_stroke(panel, 8.0, (1.0, tokens.border_strong), egui::StrokeKind::Inside);
+		painter.rect_filled(panel, round, tokens.raised);
+		painter.rect_stroke(panel, round, (1.0, tokens.border_strong), egui::StrokeKind::Inside);
 
 		let query_at = pos2(panel.min.x + 16.0, panel.min.y + 22.0);
 		painter.text(query_at, Align2::LEFT_CENTER, "\u{f002}", small.clone(), tokens.disabled);
@@ -5248,7 +5693,8 @@ impl App {
 		let clipped = painter.with_clip_rect(panel);
 		let mut at_y = panel.min.y + 44.0;
 		let (mut seat, mut run) = (None, false);
-		for (i, hit) in fuzzy.hits.iter().take(rows).enumerate() {
+		let shown = if sidebar { rows.saturating_sub(headers as usize) } else { rows };
+		for (i, hit) in fuzzy.hits.iter().take(shown).enumerate() {
 			let Some(item) = fuzzy.items.get(hit.at) else { continue };
 
 			let before = if i == 0 {
@@ -5734,17 +6180,29 @@ impl App {
 		let visible = help_rows(&rows, &self.help_query.text);
 
 		let painter = ui.painter().clone();
-		let dim = Rect::from_min_max(area.min, pos2(area.max.x, area.max.y - STATUS_HEIGHT));
-		painter.rect_filled(dim, 0.0, Color32::from_black_alpha(200));
 
 		let cells_of = |text: &str| text.chars().map(crate::list::cell_width).sum::<u32>() as usize;
 		let key_cells = visible.iter().filter_map(|at| rows.get(*at)).map(|(on, ..)| cells_of(on)).max().unwrap_or(8).clamp(4, 12);
 		let word_cells = visible.iter().filter_map(|at| rows.get(*at)).map(|(_, _, desc)| cells_of(desc)).max().unwrap_or(16).clamp(8, 30);
-		let (width, height) = help_size(area, key_cells, word_cells, visible.len(), advance, line);
-		let panel = Rect::from_center_size(area.center(), Vec2::new(width, height));
-		painter.rect_filled(panel, 8.0, tokens.base);
+		// Help rides the same right sidebar as the index — over the preview, never a centered float.
+		let width = self.index_width.clamp(260.0, (area.width() - RAIL_WIDTH - 200.0).max(260.0));
+		let panel = Rect::from_min_max(
+			pos2(area.max.x - RAIL_WIDTH - width, area.min.y + TAB_HEIGHT),
+			pos2(area.max.x - RAIL_WIDTH, area.max.y - STATUS_HEIGHT),
+		);
+		painter.rect_filled(panel, 0.0, tokens.base);
+		painter.rect_stroke(panel, 0.0, (1.0, tokens.border_strong), egui::StrokeKind::Inside);
 
-		let header = format!("帮助 — {} 条绑定（j/k 或滚轮浏览，回车执行，Esc 关闭）", rows.len());
+		let grip = Rect::from_min_max(pos2(panel.min.x - 3.0, panel.min.y), pos2(panel.min.x + 3.0, panel.max.y));
+		let response = ui.interact(grip, egui::Id::unique("help-grip"), Sense::click_and_drag());
+		if response.dragged() {
+			self.index_width = (self.index_width - response.drag_delta().x).clamp(260.0, (area.width() - RAIL_WIDTH - 200.0).max(260.0));
+		}
+		if response.hovered() || response.dragged() {
+			ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+		}
+
+		let header = format!("帮助 — {} 条绑定", rows.len());
 		painter.text(
 			panel.min + Vec2::new(advance, line * 0.25),
 			Align2::LEFT_TOP,
@@ -6495,16 +6953,6 @@ pub(crate) fn find_row(view: &[usize], entries: &[Entry], pattern: &str, from: u
 	}
 }
 
-pub(crate) fn help_size(area: Rect, key_cells: usize, word_cells: usize, visible: usize, advance: f32, line: f32) -> (f32, f32) {
-	let width = (advance * (key_cells + word_cells) as f32 + advance * 4.0)
-		.clamp(advance * 24.0, (area.width() * 0.9).max(advance * 24.0));
-	let room = ((area.height() * 0.7 - line * 4.5).max(line * 4.0) / line).floor();
-	let rows = (visible as f32).clamp(4.0, room);
-	let height = line * 4.5 + rows * line;
-
-	(width, height)
-}
-
 fn status_button(
 	ui: &mut Ui,
 	tokens: &Tokens,
@@ -6830,7 +7278,12 @@ pub(crate) fn hover_at(pointer: Option<egui::Pos2>, column: Rect, row_h: f32, fr
 }
 
 impl eframe::App for App {
-	fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+	fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+		if !self.dnd_try {
+			self.dnd_try = true;
+			self.dnd = dnd::Dnd::attach(frame);
+			eprintln!("crabhop: wayland drag {}", if self.dnd.is_some() { "attached" } else { "unavailable" });
+		}
 		self.frame(ui);
 	}
 }
@@ -6859,6 +7312,10 @@ impl App {
 		self.undo_poll(&ctx);
 		self.device_poll(&ctx);
 		self.pack_poll(&ctx);
+		self.dnd_poll(&ctx);
+		self.idrag_poll(&ctx);
+		self.idrag_target = None;
+		self.theme_poll(&ctx);
 		self.fuzzy_tick(&ctx);
 		self.preview.poll();
 
@@ -7622,14 +8079,6 @@ mod query_tests {
 			("m p".to_owned(), "linemode permissions".to_owned(), "行模式：显示权限".to_owned()),
 			(", b".to_owned(), "sort btime --reverse=no".to_owned(), "按创建时间正序".to_owned()),
 		];
-
-		let area = Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(1200.0, 800.0));
-		let (narrow, short) = help_size(area, 4, 8, 3, 9.0, 24.0);
-		let (wide, tall) = help_size(area, 12, 30, 200, 9.0, 24.0);
-		assert!(wide > narrow, "the columns decide the width: {narrow} → {wide}");
-		assert!((short - 24.0 * 8.5).abs() < 0.01, "a handful of rows is a short panel, floored at four rows: {short}");
-		assert!(tall <= 800.0 * 0.7 + 0.01, "and the height stops at seventy percent: {tall}");
-		assert!(tall > short, "more rows, a taller panel: {short} → {tall}");
 
 		assert_eq!(help_rows(&rows, ""), vec![ 0, 1, 2, 3 ], "nothing typed: the whole table");
 		assert_eq!(help_rows(&rows, "  "), vec![ 0, 1, 2, 3 ], "and spaces are nothing");

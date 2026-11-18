@@ -6,6 +6,7 @@ mod chrome;
 mod complete;
 mod config;
 mod desktop;
+mod dnd;
 mod edit;
 mod folder;
 mod frecency;

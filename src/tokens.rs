@@ -1,5 +1,6 @@
 
-use std::sync::{Arc, OnceLock};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use eframe::egui::{Color32, Context, FontData, FontDefinitions, FontFamily, FontId, TextStyle, Visuals};
 
@@ -19,7 +20,7 @@ pub(crate) const SHEET_COL_MAX_W: f32 = 320.0;
 
 pub(crate) const ICON_BOX: f32 = 20.0;
 
-static THEME: OnceLock<Tokens> = OnceLock::new();
+static THEME: Mutex<Option<Tokens>> = Mutex::new(None);
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) struct Tokens {
@@ -81,21 +82,32 @@ impl Tokens {
 	};
 
 	pub(crate) fn theme() -> Self {
-		*THEME.get_or_init(|| {
-			let Some(path) = Config::dir().map(|dir| dir.join("theme.toml")) else {
-				return Self::MOCHA;
-			};
-			let Ok(text) = std::fs::read_to_string(&path) else {
-				return Self::MOCHA;
-			};
-
-			let (tokens, notes) = Self::parse(&text);
+		let mut guard = THEME.lock().unwrap();
+		if guard.is_none() {
+			let (tokens, notes) = Self::load();
 			for note in notes {
-				eprintln!("crabhop: {}: {note}", path.display());
+				eprintln!("crabhop: theme: {note}");
 			}
+			*guard = Some(tokens);
+		}
+		guard.unwrap()
+	}
 
-			tokens
-		})
+	/// Re-read theme.toml while running; the config watcher calls this on every save.
+	pub(crate) fn reload() -> (Self, Vec<String>) {
+		let (tokens, notes) = Self::load();
+		*THEME.lock().unwrap() = Some(tokens);
+		(tokens, notes)
+	}
+
+	fn load() -> (Self, Vec<String>) {
+		let Some(path) = Config::dir().map(|dir| dir.join("theme.toml")) else {
+			return (Self::MOCHA, Vec::new());
+		};
+		let Ok(text) = std::fs::read_to_string(&path) else {
+			return (Self::MOCHA, Vec::new());
+		};
+		Self::parse(&text)
 	}
 
 	pub(crate) fn parse(text: &str) -> (Self, Vec<String>) {
@@ -137,9 +149,9 @@ impl Tokens {
 
 	fn slot(&mut self, name: &str) -> Option<&mut Color32> {
 		Some(match name {
-			"base" => &mut self.base,
-			"mantle" => &mut self.mantle,
-			"crust" => &mut self.crust,
+			"base" | "middle" | "current" => &mut self.base,
+			"mantle" | "left" | "parent" => &mut self.mantle,
+			"crust" | "right" | "preview" => &mut self.crust,
 			"text" => &mut self.text,
 			"subtext" => &mut self.subtext,
 			"accent" => &mut self.accent,
@@ -176,6 +188,11 @@ impl Tokens {
 		Some(Color32::from_rgb(at(0)?, at(2)?, at(4)?))
 	}
 
+	pub(crate) fn font_path() -> Option<PathBuf> {
+		let text = std::fs::read_to_string(Config::dir()?.join("theme.toml")).ok()?;
+		font_from(&text)
+	}
+
 	pub(crate) fn install(ctx: &Context) {
 		Self::install_with(ctx, &Self::MOCHA);
 	}
@@ -193,6 +210,17 @@ impl Tokens {
 
 		let mut mono = vec![ "maple".to_owned() ];
 		mono.extend(fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default());
+		// A user font from theme.toml's [font] path leads; maple (nerd-patched) stays
+		// behind it so icons keep their glyphs even when the user font has none.
+		if let Some(path) = Self::font_path() {
+			match std::fs::read(&path) {
+				Ok(bytes) => {
+					fonts.font_data.insert("user".to_owned(), Arc::new(FontData::from_owned(bytes)));
+					mono.insert(0, "user".to_owned());
+				}
+				Err(e) => eprintln!("crabhop: font {}: {e}", path.display()),
+			}
+		}
 		fonts.families.insert(FontFamily::Monospace, mono.clone());
 
 		let mut bold = vec![ "maple-bold".to_owned() ];
@@ -222,6 +250,15 @@ impl Tokens {
 
 		visuals
 	}
+}
+
+fn font_from(text: &str) -> Option<PathBuf> {
+	let value: toml::Value = toml::from_str(text).ok()?;
+	let path = value.get("font")?.get("path")?.as_str()?;
+	if let Some(rest) = path.strip_prefix("~/") {
+		return Some(PathBuf::from(std::env::var_os("HOME")?).join(rest));
+	}
+	Some(PathBuf::from(path))
 }
 
 #[cfg(test)]
@@ -268,5 +305,22 @@ mod tests {
 		let (tokens, notes) = Tokens::parse("[colors\nbase = ");
 		assert!(tokens == Tokens::MOCHA);
 		assert_eq!(notes.len(), 1);
+	}
+
+	#[test]
+	fn the_column_aliases_land_on_the_three_backgrounds() {
+		let (tokens, notes) = Tokens::parse("[colors]\nleft = \"#010203\"\nmiddle = \"#040506\"\nright = \"#070809\"\n");
+		assert!(notes.is_empty(), "{notes:?}");
+		assert_eq!(tokens.mantle, Color32::from_rgb(0x01, 0x02, 0x03));
+		assert_eq!(tokens.base, Color32::from_rgb(0x04, 0x05, 0x06));
+		assert_eq!(tokens.crust, Color32::from_rgb(0x07, 0x08, 0x09));
+	}
+
+	#[test]
+	fn the_font_path_comes_from_the_font_table() {
+		assert_eq!(font_from("[font]\npath = \"/usr/share/fonts/a.ttf\"\n"), Some(PathBuf::from("/usr/share/fonts/a.ttf")));
+		assert_eq!(font_from("[colors]\nbase = \"#000000\"\n"), None);
+		assert_eq!(font_from("[font]\npath = 7\n"), None);
+		assert_eq!(font_from("[font\npath = "), None);
 	}
 }

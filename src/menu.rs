@@ -70,6 +70,8 @@ pub(crate) enum Action {
 	Copy,
 	Cut,
 	Paste,
+	Rename,
+	Trash,
 	OpenTerminal,
 	OpenWith,
 	Spot,
@@ -88,10 +90,16 @@ pub(crate) fn main_items(target: &Target, yank: bool) -> Vec<Item> {
 		if yank { Item::Do(Action::Paste, "粘贴") } else { Item::Off("粘贴") },
 	];
 
+	if matches!(target, Target::Row(..)) {
+		items.push(Item::Do(Action::Rename, "重命名"));
+	}
 	if target.folder().is_some() {
 		items.push(Item::Do(Action::OpenTerminal, "在终端中打开"));
 	}
 	items.push(Item::Do(Action::OpenWith, "打开方式…"));
+	if !matches!(target, Target::Folder(..)) {
+		items.push(Item::Do(Action::Trash, "移动到回收站"));
+	}
 	items.push(Item::Do(Action::Spot, "属性"));
 
 	items
@@ -288,10 +296,10 @@ mod tests {
 				.collect()
 		};
 
-		assert_eq!(words(&folder), vec![ "复制", "剪切", "粘贴", "在终端中打开", "打开方式…", "属性" ]);
+		assert_eq!(words(&folder), vec![ "复制", "剪切", "粘贴", "重命名", "在终端中打开", "打开方式…", "移动到回收站", "属性" ]);
 		assert_eq!(words(&blank), vec![ "复制", "剪切", "粘贴", "在终端中打开", "打开方式…", "属性" ], "the blank is its own directory");
-		assert_eq!(words(&file), vec![ "复制", "剪切", "粘贴", "打开方式…", "属性" ], "a file has no folder to open a terminal in");
-		assert_eq!(words(&selection), vec![ "复制", "剪切", "粘贴", "打开方式…", "属性" ], "two files are not one folder");
+		assert_eq!(words(&file), vec![ "复制", "剪切", "粘贴", "重命名", "打开方式…", "移动到回收站", "属性" ], "a file has no folder to open a terminal in");
+		assert_eq!(words(&selection), vec![ "复制", "剪切", "粘贴", "打开方式…", "移动到回收站", "属性" ], "two files are not one folder");
 
 		assert_eq!(folder.folder().as_deref(), Some(Path::new("/tmp/Pictures")));
 		assert_eq!(blank.folder().as_deref(), Some(Path::new("/tmp")));
@@ -328,13 +336,13 @@ mod tests {
 		menu.step(1);
 		assert_eq!(menu.at, 1, "the main page's own row moves");
 		menu.step(9);
-		assert_eq!(menu.at, 5, "and stops at its last item — the sixth, the folder's own roster (P33⑱)");
+		assert_eq!(menu.at, 7, "and stops at its last item — the eighth, the folder's own roster (P33⑱)");
 		menu.step(-9);
 		assert_eq!(menu.at, 0);
 	}
 
 	#[test]
-	fn the_roster_is_five_and_paste_knows_when_it_cannot() {
+	fn the_roster_is_seven_and_paste_knows_when_it_cannot() {
 		let label = |item: &Item| match item {
 			Item::Do(_, label) | Item::Off(label) => *label,
 		};
@@ -342,7 +350,7 @@ mod tests {
 
 		let file = Target::Row(PathBuf::from("/tmp/note.txt"), false);
 		let held: Vec<&str> = main_items(&file, true).iter().map(label).collect();
-		assert_eq!(held, vec![ "复制", "剪切", "粘贴", "打开方式…", "属性" ], "a file gets the family, the apps and its properties");
+		assert_eq!(held, vec![ "复制", "剪切", "粘贴", "重命名", "打开方式…", "移动到回收站", "属性" ], "a file gets the family, the apps and its properties");
 		assert!(main_items(&file, true).iter().all(live), "and with a yank every one of them is live");
 
 		let empty = main_items(&file, false);
@@ -351,7 +359,7 @@ mod tests {
 
 		let folder = Target::Row(PathBuf::from("/tmp/Pictures"), true);
 		let names: Vec<&str> = main_items(&folder, true).iter().map(label).collect();
-		assert_eq!(names, vec![ "复制", "剪切", "粘贴", "在终端中打开", "打开方式…", "属性" ], "a folder gets its terminal too");
+		assert_eq!(names, vec![ "复制", "剪切", "粘贴", "重命名", "在终端中打开", "打开方式…", "移动到回收站", "属性" ], "a folder gets its terminal too");
 
 		let blank = Target::Folder(PathBuf::from("/tmp"));
 		assert!(main_items(&blank, false).iter().any(|item| label(item) == "在终端中打开"), "and so does the blank's own directory");
@@ -489,5 +497,19 @@ mod tests {
 		let rows = menu.app_rows();
 		assert_eq!(rows.len(), 10, "app10..app19 answer");
 		assert_eq!(menu.visible_rows(900.0), MENU_APPS_ROWS, "and the window still caps at the same twelve");
+	}
+
+	#[test]
+	fn the_row_menu_offers_rename_and_trash() {
+		let row = main_items(&Target::Row("/tmp/a.txt".into(), false), false);
+		assert!(row.iter().any(|item| matches!(item, Item::Do(Action::Rename, _))));
+		assert!(row.iter().any(|item| matches!(item, Item::Do(Action::Trash, _))));
+
+		let many = main_items(&Target::Selection(vec!["/tmp/a".into(), "/tmp/b".into()]), false);
+		assert!(!many.iter().any(|item| matches!(item, Item::Do(Action::Rename, _))), "renaming a selection is ambiguous");
+		assert!(many.iter().any(|item| matches!(item, Item::Do(Action::Trash, _))));
+
+		let blank = main_items(&Target::Folder("/tmp".into()), false);
+		assert!(!blank.iter().any(|item| matches!(item, Item::Do(Action::Rename | Action::Trash, _))), "blank-area menu has no file to act on");
 	}
 }

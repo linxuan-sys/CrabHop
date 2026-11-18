@@ -1,0 +1,47 @@
+# Maintainer: linxuan-sys <icefever@qq.com>
+# crabhop 的预编译孪生包：和 packaging/arch/PKGBUILD 装同样的文件，
+# 但用户机器不需要 Rust 工具链——直接解 GitHub Release 的安装包。
+# 发到 AUR 时包名 crabhop-bin，与源码包 crabhop 互斥（provides/conflicts）。
+pkgname=crabhop-bin
+pkgver=1.0.3
+pkgrel=1
+pkgdesc='Native, keyboard-first file manager — three columns, a preview stack, and a headless harness (prebuilt binary)'
+arch=('x86_64')
+url='https://github.com/linxuan-sys/CrabHop'
+license=('MIT')
+# 运行时依赖与源码包一致：窗口后端与 wgpu 都是 dlopen 加载，见源码包 PKGBUILD 的注释
+depends=(
+	'libx11'
+	'libxcb'
+	'libxcursor'
+	'libxi'
+	'libxrandr'
+	'libxkbcommon'
+	'libxkbcommon-x11'
+	'wayland'
+	'libglvnd'
+	'vulkan-icd-loader'
+	'vulkan-driver'
+)
+optdepends=(
+	'ffmpeg: video previews'
+	'ffmpegthumbnailer: faster video thumbnails'
+)
+provides=('crabhop')
+conflicts=('crabhop')
+source=("https://github.com/linxuan-sys/CrabHop/releases/download/v$pkgver/crabhop-$pkgver-linux-x86_64.tar.xz")
+sha256sums=('0d994160d91899d77957376d3fc1cabf7cbdde7a0e4049805cf17a9dcd76e23a')
+
+package() {
+	cd "crabhop-$pkgver"
+	install -Dm755 crabhop "$pkgdir/usr/bin/crabhop"
+	install -Dm644 crabhop.desktop "$pkgdir/usr/share/applications/crabhop.desktop"
+	for size in 512x512 256x256 128x128; do
+		install -Dm644 "hicolor/$size/apps/crabhop.png" \
+			"$pkgdir/usr/share/icons/hicolor/$size/apps/crabhop.png"
+	done
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+	install -Dm644 NOTICE "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
+	install -Dm644 LICENSE-ICONS "$pkgdir/usr/share/licenses/$pkgname/LICENSE-ICONS"
+	install -Dm644 LICENSE-MapleMono.txt "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MapleMono.txt"
+}

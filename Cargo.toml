@@ -62,6 +62,13 @@ flate2 = "1.1"
 # through arboard, so declaring it here adds no package to the tree.
 wl-clipboard-rs = "0.9"
 
+# Drag-out (the outbound half of the README's drag item): winit 0.30 is mute on
+# wl_data_device, so src/dnd.rs rides the window's own display with a second event
+# queue. Both crates are already in the lock through wl-clipboard-rs / winit —
+# declaring them here adds no package to the tree.
+wayland-client    = "0.31"
+raw-window-handle = "0.6"
+
 # Markdown: the spec's own route (§3.8) — pulldown-cmark to events, laid out by hand.
 pulldown-cmark = { version = "0.13", default-features = false }
 

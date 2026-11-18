@@ -1377,7 +1377,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 	assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 	s.app.set_terminal_dry_for_tests();
 
-	walk(&mut s, &[ "menu 0", "key j", "key j", "key j", "key Enter" ]);
+	walk(&mut s, &[ "menu 0", "key j", "key j", "key j", "key j", "key Enter" ]);
 
 	let rows = s.app.menu_app_rows_for_tests();
 	assert_eq!(rows.first().map(|(zone, _)| *zone), Some(Some("推荐")), "{rows:?}");
@@ -1469,7 +1469,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		s.shoot();
 		s.shoot();
 
-		s.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
+		s.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(16));
 			s.shoot();
@@ -1506,7 +1506,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert!(s.app.scroll_offset_for_tests() > 0, "the list hears the wheel when no panel stands: {}", s.app.scroll_offset_for_tests());
 
-		s.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
+		s.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(8));
 			s.shoot();
@@ -1677,7 +1677,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 			}
 		}
 		let by_key = s.app.menu_state_for_tests();
-		assert_eq!(by_key, Some(("main", 5)), "`o` opened the cursor row's menu");
+		assert_eq!(by_key, Some(("main", 7)), "`o` opened the cursor row's menu");
 
 		s.app.rehearse(vec![ "key Esc".to_owned() ]);
 		for _ in 0..60 {
@@ -1798,14 +1798,14 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 			s.app.menu_state_for_tests()
 		};
 
-		s.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key l".to_owned() ]);
+		s.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key l".to_owned() ]);
 		let by_l = wait_page(&mut s, "apps");
 		assert!(by_l.is_some_and(|(page, _)| page == "apps"), "`l` opened the applications page: {by_l:?}");
 
 		s.app.rehearse(vec![ "key Esc".to_owned() ]);
 		let back = wait_page(&mut s, "main");
-		assert_eq!(back, Some(("main", 5)), "Esc stepped back to the items");
-		s.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
+		assert_eq!(back, Some(("main", 7)), "Esc stepped back to the items");
+		s.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		let by_enter = wait_page(&mut s, "apps");
 		assert_eq!(by_enter, by_l, "Enter and `l` open the same state");
 
@@ -1829,7 +1829,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		}
 		assert_eq!(s.app.cwd_for_tests(), root, "the window stands on the sandbox");
 
-		s.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
+		s.app.rehearse(vec![ "menu 0".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		for _ in 0..120 {
 			std::thread::sleep(Duration::from_millis(8));
 			s.shoot();
@@ -1954,6 +1954,7 @@ fn the_open_with_list_carries_nvim_and_wraps_a_terminal_entry() {
 		let onto_nvim = |s: &mut Session| {
 			s.app.rehearse(vec![
 				"menu 0".to_owned(),
+				"key j".to_owned(),
 				"key j".to_owned(),
 				"key j".to_owned(),
 				"key j".to_owned(),
@@ -2316,6 +2317,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			"key j".to_owned(),
 			"key j".to_owned(),
 			"key j".to_owned(),
+			"key j".to_owned(),
 			"key Enter".to_owned(),
 			"type nvim".to_owned(),
 			"key Down".to_owned(),
@@ -2602,7 +2604,8 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			let columns = chrome::columns(body, shares);
 
 			(
-				egui::Rect::from_min_max(egui::pos2(0.0, body.max.y + 4.0), egui::pos2(400.0, body.max.y + 24.0)),
+				// The find strip rides directly above the body's bottom edge.
+				egui::Rect::from_min_max(egui::pos2(0.0, body.max.y - 28.0), egui::pos2(400.0, body.max.y - 8.0)),
 				egui::Rect::from_min_max(egui::pos2(columns.current.min.x, body.min.y), egui::pos2(columns.current.max.x, body.min.y + 220.0)),
 			)
 		};
@@ -2928,7 +2931,8 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let crust = Tokens::MOCHA.crust;
 		let mut lit = 0;
 		for y in (foot + 4)..(preview.max.y as usize - 16) {
-			for x in (preview.min.x as usize + 2)..(preview.max.x as usize - 2) {
+			// The index rail rides over the preview's right edge by design.
+			for x in (preview.min.x as usize + 2)..((preview.max.x - chrome::RAIL_WIDTH) as usize) {
 				if image.pixels[y * stride + x] != crust {
 					lit += 1;
 				}
@@ -2975,7 +2979,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		};
 
 		session.app.rehearse(vec![ "menu 1".to_owned() ]);
-		assert_eq!(step(&mut session, Some(("main", 5))), Some(("main", 5)), "a file's menu is five rows");
+		assert_eq!(step(&mut session, Some(("main", 7))), Some(("main", 7)), "a file's menu is seven rows");
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
 		assert_eq!(step(&mut session, None), None);
 
@@ -2985,9 +2989,9 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 			session.shoot();
 		}
 		session.app.rehearse(vec![ "menu 0".to_owned() ]);
-		assert_eq!(step(&mut session, Some(("main", 6))), Some(("main", 6)), "a folder's menu has six");
+		assert_eq!(step(&mut session, Some(("main", 8))), Some(("main", 8)), "a folder's menu has eight");
 
-		session.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
+		session.app.rehearse(vec![ "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key j".to_owned(), "key Enter".to_owned() ]);
 		let apps = {
 			let mut state = None;
 			for _ in 0..60 {
@@ -3006,7 +3010,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		);
 
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
-		assert_eq!(step(&mut session, Some(("main", 6))), Some(("main", 6)), "Esc steps back to the items");
+		assert_eq!(step(&mut session, Some(("main", 8))), Some(("main", 8)), "Esc steps back to the items");
 		session.app.rehearse(vec![ "key Esc".to_owned() ]);
 		assert_eq!(step(&mut session, None), None, "and the last Esc puts it away");
 
@@ -3300,7 +3304,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 	fn the_status_bar_opens_the_index_and_says_so() {
 		let mut s = session(Vec::new());
 		s.shoot();
-		let button = s.app.status_index_hit_for_tests().expect("the status bar drew its index button");
+		let button = s.app.status_index_hit_for_tests().expect("the tab bar drew its index toggle");
 		assert!(!s.app.index_open(), "no panel yet");
 
 		s.click_at(button.center());
@@ -3344,8 +3348,8 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 		let trash = s.app.status_trash_hit_for_tests().expect("the trash button");
 		let help = s.app.status_help_hit_for_tests().expect("the help button");
 		assert!(
-			index.center().x < trash.center().x && trash.center().x < help.center().x,
-			"the buttons stand 索引 · 回收站 · 帮助"
+			index.center().y < trash.center().y && help.center().y < trash.center().y,
+			"the index and help toggles ride the rail; 回收站 keeps the status bar"
 		);
 
 		let accent = Tokens::MOCHA.accent;
